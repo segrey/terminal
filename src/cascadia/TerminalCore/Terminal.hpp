@@ -30,6 +30,7 @@ namespace winrt::Microsoft::Terminal::Core
 {
     struct ICoreSettings;
     struct ICoreAppearance;
+    struct Scheme;
 }
 
 namespace Microsoft::Terminal::Core
@@ -213,6 +214,9 @@ public:
 
     const std::optional<til::color> GetTabColor() const noexcept;
     til::color GetDefaultBackground() const noexcept;
+
+    winrt::Microsoft::Terminal::Core::Scheme GetColorScheme() const noexcept;
+    void ApplyScheme(const winrt::Microsoft::Terminal::Core::Scheme& scheme);
 
     Microsoft::Console::Render::BlinkingState& GetBlinkingState() const noexcept;
 
