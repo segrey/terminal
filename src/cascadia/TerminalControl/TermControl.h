@@ -107,6 +107,7 @@ namespace winrt::Microsoft::Terminal::Control::implementation
 
         winrt::Microsoft::Terminal::Core::Scheme ColorScheme() const noexcept;
         void ColorScheme(const winrt::Microsoft::Terminal::Core::Scheme& scheme) const noexcept;
+        Windows::UI::Xaml::Media::Brush BackgroundBrush();
 
         // -------------------------------- WinRT Events ---------------------------------
         // clang-format off

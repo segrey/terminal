@@ -19,6 +19,7 @@ namespace TerminalAppLocalTests
 {
     class TabTests;
     class SettingsTests;
+    class TrustCommandlineTests;
 };
 
 namespace winrt::TerminalApp::implementation
@@ -207,6 +208,7 @@ namespace winrt::TerminalApp::implementation
         winrt::Windows::Foundation::IAsyncOperation<winrt::Windows::UI::Xaml::Controls::ContentDialogResult> _ShowCloseReadOnlyDialog();
         winrt::Windows::Foundation::IAsyncOperation<winrt::Windows::UI::Xaml::Controls::ContentDialogResult> _ShowMultiLinePasteWarningDialog();
         winrt::Windows::Foundation::IAsyncOperation<winrt::Windows::UI::Xaml::Controls::ContentDialogResult> _ShowLargePasteWarningDialog();
+        winrt::Windows::Foundation::IAsyncOperation<winrt::Windows::UI::Xaml::Controls::ContentDialogResult> _ShowCommandlineApproveWarning();
 
         void _CreateNewTabFlyout();
         void _OpenNewTabDropdown();
@@ -403,6 +405,12 @@ namespace winrt::TerminalApp::implementation
 
         winrt::Microsoft::Terminal::Settings::Model::Profile GetClosestProfileForDuplicationOfProfile(const winrt::Microsoft::Terminal::Settings::Model::Profile& profile) const noexcept;
 
+        bool _shouldPromptForCommandline(const winrt::hstring& cmdline) const;
+        void _adminWarningPrimaryClicked(const winrt::TerminalApp::AdminWarningPlaceholder& sender,
+                                         const winrt::Windows::UI::Xaml::RoutedEventArgs& args);
+        void _adminWarningCancelClicked(const winrt::TerminalApp::AdminWarningPlaceholder& sender,
+                                        const winrt::Windows::UI::Xaml::RoutedEventArgs& args);
+
         winrt::fire_and_forget _ConnectionStateChangedHandler(const winrt::Windows::Foundation::IInspectable& sender, const winrt::Windows::Foundation::IInspectable& args) const;
         void _CloseOnExitInfoDismissHandler(const winrt::Windows::Foundation::IInspectable& sender, const winrt::Windows::Foundation::IInspectable& args) const;
         void _KeyboardServiceWarningInfoDismissHandler(const winrt::Windows::Foundation::IInspectable& sender, const winrt::Windows::Foundation::IInspectable& args) const;
@@ -410,6 +418,7 @@ namespace winrt::TerminalApp::implementation
         void _SetAsDefaultOpenSettingsHandler(const winrt::Windows::Foundation::IInspectable& sender, const winrt::Windows::Foundation::IInspectable& args);
         static bool _IsMessageDismissed(const winrt::Microsoft::Terminal::Settings::Model::InfoBarMessage& message);
         static void _DismissMessage(const winrt::Microsoft::Terminal::Settings::Model::InfoBarMessage& message);
+        static bool _isTrustedCommandline(std::wstring_view commandLine);
 
 #pragma region ActionHandlers
         // These are all defined in AppActionHandlers.cpp
@@ -420,6 +429,7 @@ namespace winrt::TerminalApp::implementation
 
         friend class TerminalAppLocalTests::TabTests;
         friend class TerminalAppLocalTests::SettingsTests;
+        friend class TerminalAppLocalTests::TrustCommandlineTests;
     };
 }
 

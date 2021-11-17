@@ -2697,4 +2697,9 @@ namespace winrt::Microsoft::Terminal::Control::implementation
     {
         _core.ColorScheme(scheme);
     }
+
+    Media::Brush TermControl::BackgroundBrush()
+    {
+        return RootGrid().Background();
+    }
 }
