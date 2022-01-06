@@ -344,11 +344,6 @@ void AtlasEngine::_drawGlyph(const AtlasQueueItem& item) const
     // See D2DFactory::DrawText
     wil::com_ptr<IDWriteTextLayout> textLayout;
     THROW_IF_FAILED(_sr.dwriteFactory->CreateTextLayout(&key->chars[0], charsLength, textFormat, cells * _r.cellSizeDIP.x, _r.cellSizeDIP.y, textLayout.addressof()));
-    if (item.scale != 1.0f)
-    {
-        const auto f = textFormat->GetFontSize();
-        textLayout->SetFontSize(f * item.scale, { 0, charsLength });
-    }
     if (_r.typography)
     {
         textLayout->SetTypography(_r.typography.get(), { 0, charsLength });
