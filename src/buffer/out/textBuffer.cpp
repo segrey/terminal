@@ -8,6 +8,7 @@
 
 #include "../types/inc/utils.hpp"
 #include "../types/inc/convert.hpp"
+#include "../../types/inc/Utf16Parser.hpp"
 #include "../../types/inc/GlyphWidth.hpp"
 
 #pragma hdrstop
@@ -1430,12 +1431,13 @@ const til::point TextBuffer::GetGlyphStart(const til::point pos, std::optional<t
 }
 
 // Method Description:
-// - Update pos to be the end of the current glyph/character. This is used for accessibility
+// - Update pos to be the end of the current glyph/character.
 // Arguments:
 // - pos - a COORD on the word you are currently on
+// - accessibilityMode - this is being used for accessibility; make the end exclusive.
 // Return Value:
 // - pos - The COORD for the last cell of the current glyph (exclusive)
-const til::point TextBuffer::GetGlyphEnd(const til::point pos, std::optional<til::point> limitOptional) const
+const til::point TextBuffer::GetGlyphEnd(const til::point pos, bool accessibilityMode, std::optional<til::point> limitOptional) const
 {
     COORD resultPos = pos;
     const auto bufferSize = GetSize();
@@ -1453,7 +1455,10 @@ const til::point TextBuffer::GetGlyphEnd(const til::point pos, std::optional<til
     }
 
     // increment one more time to become exclusive
-    bufferSize.IncrementInBounds(resultPos, true);
+    if (accessibilityMode)
+    {
+        bufferSize.IncrementInBounds(resultPos, true);
+    }
     return resultPos;
 }
 
@@ -2443,7 +2448,7 @@ uint16_t TextBuffer::GetHyperlinkId(std::wstring_view uri, std::wstring_view id)
         // assign _currentHyperlinkId if the custom id does not already exist
         std::wstring newId{ id };
         // hash the URL and add it to the custom ID - GH#7698
-        newId += L"%" + std::to_wstring(std::hash<std::wstring_view>{}(uri));
+        newId += L"%" + std::to_wstring(til::hash(uri));
         const auto result = _hyperlinkCustomIdMap.emplace(newId, _currentHyperlinkId);
         if (result.second)
         {
@@ -2581,16 +2586,17 @@ PointTree TextBuffer::GetPatterns(const size_t firstRow, const size_t lastRow) c
             // match and the previous match, so we use the size of the prefix
             // along with the size of the match to determine the locations
             size_t prefixSize = 0;
-
-            for (const auto ch : i->prefix().str())
+            for (const std::vector<wchar_t> parsedGlyph : Utf16Parser::Parse(i->prefix().str()))
             {
-                prefixSize += IsGlyphFullWidth(ch) ? 2 : 1;
+                const std::wstring_view glyph{ parsedGlyph.data(), parsedGlyph.size() };
+                prefixSize += IsGlyphFullWidth(glyph) ? 2 : 1;
             }
             const auto start = lenUpToThis + prefixSize;
             size_t matchSize = 0;
-            for (const auto ch : i->str())
+            for (const std::vector<wchar_t> parsedGlyph : Utf16Parser::Parse(i->str()))
             {
-                matchSize += IsGlyphFullWidth(ch) ? 2 : 1;
+                const std::wstring_view glyph{ parsedGlyph.data(), parsedGlyph.size() };
+                matchSize += IsGlyphFullWidth(glyph) ? 2 : 1;
             }
             const auto end = start + matchSize;
             lenUpToThis = end;

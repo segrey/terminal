@@ -4,6 +4,7 @@
 #include "pch.h"
 #include "NonClientIslandWindow.h"
 #include "NotificationIcon.h"
+#include <til/throttled_func.h>
 
 class AppHost
 {
@@ -31,7 +32,12 @@ private:
     bool _shouldCreateWindow{ false };
     bool _useNonClientArea{ false };
 
+    std::optional<til::throttled_func_trailing<>> _getWindowLayoutThrottler;
+    winrt::Windows::Foundation::IAsyncAction _SaveWindowLayouts();
+    winrt::fire_and_forget _SaveWindowLayoutsRepeat();
+
     void _HandleCommandlineArgs();
+    winrt::Microsoft::Terminal::Settings::Model::LaunchPosition _GetWindowLaunchPosition();
 
     void _HandleCreateWindow(const HWND hwnd, RECT proposedRect, winrt::Microsoft::Terminal::Settings::Model::LaunchMode& launchMode);
     void _UpdateTitleBarContent(const winrt::Windows::Foundation::IInspectable& sender,
@@ -42,6 +48,8 @@ private:
                            const winrt::Windows::Foundation::IInspectable& arg);
     void _FullscreenChanged(const winrt::Windows::Foundation::IInspectable& sender,
                             const winrt::Windows::Foundation::IInspectable& arg);
+    void _ChangeMaximizeRequested(const winrt::Windows::Foundation::IInspectable& sender,
+                                  const winrt::Windows::Foundation::IInspectable& arg);
     void _AlwaysOnTopChanged(const winrt::Windows::Foundation::IInspectable& sender,
                              const winrt::Windows::Foundation::IInspectable& arg);
     void _RaiseVisualBell(const winrt::Windows::Foundation::IInspectable& sender,
@@ -52,6 +60,8 @@ private:
 
     void _DispatchCommandline(winrt::Windows::Foundation::IInspectable sender,
                               winrt::Microsoft::Terminal::Remoting::CommandlineArgs args);
+
+    winrt::Windows::Foundation::IAsyncOperation<winrt::hstring> _GetWindowLayoutAsync();
 
     void _FindTargetWindow(const winrt::Windows::Foundation::IInspectable& sender,
                            const winrt::Microsoft::Terminal::Remoting::FindTargetWindowArgs& args);
@@ -88,6 +98,9 @@ private:
     void _OpenSystemMenu(const winrt::Windows::Foundation::IInspectable& sender,
                          const winrt::Windows::Foundation::IInspectable& args);
 
+    void _SystemMenuChangeRequested(const winrt::Windows::Foundation::IInspectable& sender,
+                                    const winrt::TerminalApp::SystemMenuChangeArgs& args);
+
     winrt::fire_and_forget _QuitRequested(const winrt::Windows::Foundation::IInspectable& sender,
                                           const winrt::Windows::Foundation::IInspectable& args);
 
@@ -95,7 +108,7 @@ private:
                          const winrt::Windows::Foundation::IInspectable& args);
 
     void _QuitAllRequested(const winrt::Windows::Foundation::IInspectable& sender,
-                           const winrt::Windows::Foundation::IInspectable& args);
+                           const winrt::Microsoft::Terminal::Remoting::QuitAllRequestedArgs& args);
 
     void _CreateNotificationIcon();
     void _DestroyNotificationIcon();
@@ -106,4 +119,7 @@ private:
     winrt::event_token _NotificationIconPressedToken;
     winrt::event_token _ShowNotificationIconContextMenuToken;
     winrt::event_token _NotificationIconMenuItemSelectedToken;
+    winrt::event_token _GetWindowLayoutRequestedToken;
+    winrt::event_token _WindowCreatedToken;
+    winrt::event_token _WindowClosedToken;
 };

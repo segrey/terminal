@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <!--
     We're explicitly telling our references to be non-private so that they won't
@@ -73,12 +73,13 @@
       <DependentUpon>Profiles.xaml</DependentUpon>
       <SubType>Code</SubType>
     </ClInclude>
+    <ClInclude Include="ProfileViewModel.h">
+      <DependentUpon>ProfileViewModel.idl</DependentUpon>
+      <SubType>Code</SubType>
+    </ClInclude>
     <ClInclude Include="Appearances.h">
       <DependentUpon>Appearances.xaml</DependentUpon>
       <SubType>Code</SubType>
-    </ClInclude>
-    <ClInclude Include="ReadOnlyActions.h">
-      <DependentUpon>ReadOnlyActions.xaml</DependentUpon>
     </ClInclude>
     <ClInclude Include="Rendering.h">
       <DependentUpon>Rendering.xaml</DependentUpon>
@@ -119,9 +120,6 @@
       <SubType>Designer</SubType>
     </Page>
     <Page Include="Profiles.xaml">
-      <SubType>Designer</SubType>
-    </Page>
-    <Page Include="ReadOnlyActions.xaml">
       <SubType>Designer</SubType>
     </Page>
     <Page Include="Appearances.xaml">
@@ -173,12 +171,13 @@
       <DependentUpon>Profiles.xaml</DependentUpon>
       <SubType>Code</SubType>
     </ClCompile>
+    <ClCompile Include="ProfileViewModel.cpp">
+      <DependentUpon>ProfileViewModel.idl</DependentUpon>
+      <SubType>Code</SubType>
+    </ClCompile>
     <ClCompile Include="Appearances.cpp">
       <DependentUpon>Appearances.xaml</DependentUpon>
       <SubType>Code</SubType>
-    </ClCompile>
-    <ClCompile Include="ReadOnlyActions.cpp">
-      <DependentUpon>ReadOnlyActions.xaml</DependentUpon>
     </ClCompile>
     <ClCompile Include="Rendering.cpp">
       <DependentUpon>Rendering.xaml</DependentUpon>
@@ -223,10 +222,6 @@
       <DependentUpon>Interaction.xaml</DependentUpon>
       <SubType>Code</SubType>
     </Midl>
-    <Midl Include="ReadOnlyActions.idl">
-      <DependentUpon>ReadOnlyActions.xaml</DependentUpon>
-      <SubType>Code</SubType>
-    </Midl>
     <Midl Include="Rendering.idl">
       <DependentUpon>Rendering.xaml</DependentUpon>
       <SubType>Code</SubType>
@@ -238,6 +233,7 @@
       <DependentUpon>Profiles.xaml</DependentUpon>
       <SubType>Code</SubType>
     </Midl>
+    <Midl Include="ProfileViewModel.idl" />
     <Midl Include="Appearances.idl">
       <DependentUpon>Appearances.xaml</DependentUpon>
       <SubType>Code</SubType>
@@ -312,12 +308,12 @@
   </ItemDefinitionGroup>
 
   <Import Project="$(OpenConsoleDir)src\cppwinrt.build.post.props" />
-  <Import Project="..\..\..\packages\Microsoft.UI.Xaml.2.5.0-prerelease.201202003\build\native\Microsoft.UI.Xaml.targets" Condition="Exists('..\..\..\packages\Microsoft.UI.Xaml.2.5.0-prerelease.201202003\build\native\Microsoft.UI.Xaml.targets')" />
+  <Import Project="..\..\..\packages\Microsoft.UI.Xaml.2.7.0-prerelease.210913003\build\native\Microsoft.UI.Xaml.targets" Condition="Exists('..\..\..\packages\Microsoft.UI.Xaml.2.7.0-prerelease.210913003\build\native\Microsoft.UI.Xaml.targets')" />
   <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
     <PropertyGroup>
       <ErrorText>This project references NuGet package(s) that are missing on this computer. Use NuGet Package Restore to download them.  For more information, see http://go.microsoft.com/fwlink/?LinkID=322105. The missing file is {0}.</ErrorText>
     </PropertyGroup>
-    <Error Condition="!Exists('$(OpenConsoleDir)\packages\Microsoft.UI.Xaml.2.5.0-prerelease.201202003\build\native\Microsoft.UI.Xaml.targets')" Text="$([System.String]::Format('$(ErrorText)', '$(OpenConsoleDir)\packages\Microsoft.UI.Xaml.2.5.0-prerelease.201202003\build\native\Microsoft.UI.Xaml.targets'))" />
+    <Error Condition="!Exists('$(OpenConsoleDir)\packages\Microsoft.UI.Xaml.2.7.0-prerelease.210913003\build\native\Microsoft.UI.Xaml.targets')" Text="$([System.String]::Format('$(ErrorText)', '$(OpenConsoleDir)\packages\Microsoft.UI.Xaml.2.7.0-prerelease.210913003\build\native\Microsoft.UI.Xaml.targets'))" />
   </Target>
   <Import Project="$(SolutionDir)build\rules\CollectWildcardResources.targets" />
 </Project>

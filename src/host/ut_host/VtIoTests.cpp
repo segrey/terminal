@@ -290,11 +290,6 @@ public:
     {
     }
 
-    const TextAttribute GetDefaultBrushColors() noexcept override
-    {
-        return TextAttribute{};
-    }
-
     std::pair<COLORREF, COLORREF> GetAttributeColors(const TextAttribute& /*attr*/) const noexcept override
     {
         return std::make_pair(COLORREF{}, COLORREF{});
@@ -390,6 +385,11 @@ public:
 
     void ColorSelection(const COORD /*coordSelectionStart*/, const COORD /*coordSelectionEnd*/, const TextAttribute /*attr*/)
     {
+    }
+
+    const bool IsUiaDataInitialized() const noexcept
+    {
+        return true;
     }
 
     const std::wstring GetHyperlinkUri(uint16_t /*id*/) const noexcept

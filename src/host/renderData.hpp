@@ -15,6 +15,7 @@ Author(s):
 #pragma once
 
 #include "../renderer/inc/IRenderData.hpp"
+#include "../types/inc/colorTable.hpp"
 #include "../types/IUiaData.h"
 
 class RenderData final :
@@ -36,8 +37,6 @@ public:
 #pragma endregion
 
 #pragma region IRenderData
-    const TextAttribute GetDefaultBrushColors() noexcept override;
-
     COORD GetCursorPosition() const noexcept override;
     bool IsCursorVisible() const noexcept override;
     bool IsCursorOn() const noexcept override;
@@ -69,5 +68,6 @@ public:
     const COORD GetSelectionAnchor() const noexcept;
     const COORD GetSelectionEnd() const noexcept;
     void ColorSelection(const COORD coordSelectionStart, const COORD coordSelectionEnd, const TextAttribute attr);
+    const bool IsUiaDataInitialized() const noexcept override { return true; }
 #pragma endregion
 };

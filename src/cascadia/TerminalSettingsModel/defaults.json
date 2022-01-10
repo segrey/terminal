@@ -12,6 +12,7 @@
     "copyOnSelect": false,
     "copyFormatting": true,
     "trimBlockSelection": false,
+    "trimPaste": true,
     "wordDelimiters": " /\\()\"'-.,:;<>~!@#$%^&*|+=[]{}~?\u2502",
 
     // Tab UI
@@ -20,10 +21,11 @@
     "showTerminalTitleInTitlebar": true,
     "tabWidthMode": "equal",
     "tabSwitcherMode": "inOrder",
+    "showAdminShield": true,
 
     // Miscellaneous
     "confirmCloseAllTabs": true,
-    "startOnUserLogin":  false,
+    "startOnUserLogin": false,
     "theme": "system",
     "snapToGridOnResize": true,
     "disableAnimations": false,
@@ -353,6 +355,8 @@
         { "command": { "action": "moveFocus", "direction": "previousInOrder" } },
         { "command": { "action": "moveFocus", "direction": "nextInOrder" } },
         { "command": { "action": "moveFocus", "direction": "first" } },
+        { "command": { "action": "moveFocus", "direction": "parent" } },
+        { "command": { "action": "moveFocus", "direction": "child" } },
         { "command": { "action": "swapPane", "direction": "down" } },
         { "command": { "action": "swapPane", "direction": "left" } },
         { "command": { "action": "swapPane", "direction": "right" } },

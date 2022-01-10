@@ -12,6 +12,8 @@
 #include <WtExeUtils.h>
 #include <wil/token_helpers.h >
 
+#include "../../types/inc/utils.hpp"
+
 using namespace winrt::Windows::ApplicationModel;
 using namespace winrt::Windows::ApplicationModel::DataTransfer;
 using namespace winrt::Windows::UI::Xaml;
@@ -29,12 +31,12 @@ namespace winrt
     using IInspectable = Windows::Foundation::IInspectable;
 }
 
-static const winrt::hstring StartupTaskName = L"StartTerminalOnLoginTask";
+static constexpr std::wstring_view StartupTaskName = L"StartTerminalOnLoginTask";
 // clang-format off
 // !!! IMPORTANT !!!
 // Make sure that these keys are in the same order as the
 // SettingsLoadWarnings/Errors enum is!
-static const std::array<std::wstring_view, static_cast<uint32_t>(SettingsLoadWarnings::WARNINGS_SIZE)> settingsLoadWarningsLabels {
+static const std::array settingsLoadWarningsLabels {
     USES_RESOURCE(L"MissingDefaultProfileText"),
     USES_RESOURCE(L"DuplicateProfileText"),
     USES_RESOURCE(L"UnknownColorSchemeText"),
@@ -43,7 +45,6 @@ static const std::array<std::wstring_view, static_cast<uint32_t>(SettingsLoadWar
     USES_RESOURCE(L"AtLeastOneKeybindingWarning"),
     USES_RESOURCE(L"TooManyKeysForChord"),
     USES_RESOURCE(L"MissingRequiredParameter"),
-    USES_RESOURCE(L"LegacyGlobalsProperty"),
     USES_RESOURCE(L"FailedToParseCommandJson"),
     USES_RESOURCE(L"FailedToWriteToSettings"),
     USES_RESOURCE(L"InvalidColorSchemeInCmd"),
@@ -51,11 +52,14 @@ static const std::array<std::wstring_view, static_cast<uint32_t>(SettingsLoadWar
     USES_RESOURCE(L"FailedToParseStartupActions"),
     USES_RESOURCE(L"FailedToParseSubCommands"),
 };
-static const std::array<std::wstring_view, static_cast<uint32_t>(SettingsLoadErrors::ERRORS_SIZE)> settingsLoadErrorsLabels {
+static const std::array settingsLoadErrorsLabels {
     USES_RESOURCE(L"NoProfilesText"),
     USES_RESOURCE(L"AllProfilesHiddenText")
 };
 // clang-format on
+
+static_assert(settingsLoadWarningsLabels.size() == static_cast<size_t>(SettingsLoadWarnings::WARNINGS_SIZE));
+static_assert(settingsLoadErrorsLabels.size() == static_cast<size_t>(SettingsLoadErrors::ERRORS_SIZE));
 
 // Function Description:
 // - General-purpose helper for looking up a localized string for a
@@ -68,12 +72,12 @@ static const std::array<std::wstring_view, static_cast<uint32_t>(SettingsLoadErr
 // - map: A map of keys->Resource keys.
 // Return Value:
 // - the localized string for the given type, if it exists.
-template<std::size_t N>
-static winrt::hstring _GetMessageText(uint32_t index, std::array<std::wstring_view, N> keys)
+template<typename T>
+winrt::hstring _GetMessageText(uint32_t index, const T& keys)
 {
     if (index < keys.size())
     {
-        return GetLibraryResourceString(keys.at(index));
+        return GetLibraryResourceString(til::at(keys, index));
     }
     return {};
 }
@@ -129,38 +133,6 @@ static Documents::Run _BuildErrorRun(const winrt::hstring& text, const ResourceD
     return textRun;
 }
 
-// Method Description:
-// - Returns whether the user is either a member of the Administrators group or
-//   is currently elevated.
-// - This will return **FALSE** if the user has UAC disabled entirely, because
-//   there's no separation of power between the user and an admin in that case.
-// Return Value:
-// - true if the user is an administrator
-static bool _isUserAdmin() noexcept
-try
-{
-    wil::unique_handle processToken{ GetCurrentProcessToken() };
-    const auto elevationType = wil::get_token_information<TOKEN_ELEVATION_TYPE>(processToken.get());
-    const auto elevationState = wil::get_token_information<TOKEN_ELEVATION>(processToken.get());
-    if (elevationType == TokenElevationTypeDefault && elevationState.TokenIsElevated)
-    {
-        // In this case, the user has UAC entirely disabled. This is sort of
-        // weird, we treat this like the user isn't an admin at all. There's no
-        // separation of powers, so the things we normally want to gate on
-        // "having special powers" doesn't apply.
-        //
-        // See GH#7754, GH#11096
-        return false;
-    }
-
-    return wil::test_token_membership(nullptr, SECURITY_NT_AUTHORITY, SECURITY_BUILTIN_DOMAIN_RID, DOMAIN_ALIAS_RID_ADMINS);
-}
-catch (...)
-{
-    LOG_CAUGHT_EXCEPTION();
-    return false;
-}
-
 namespace winrt::TerminalApp::implementation
 {
     // Function Description:
@@ -212,7 +184,7 @@ namespace winrt::TerminalApp::implementation
         // The TerminalPage has to be constructed during our construction, to
         // make sure that there's a terminal page for callers of
         // SetTitleBarContent
-        _isElevated = _isUserAdmin();
+        _isElevated = ::Microsoft::Console::Utils::IsElevated();
         _root = winrt::make_self<TerminalPage>();
 
         _reloadSettings = std::make_shared<ThrottledFuncTrailing<>>(winrt::Windows::System::DispatcherQueue::GetForCurrentThread(), std::chrono::milliseconds(100), [weakSelf = get_weak()]() {
@@ -307,23 +279,22 @@ namespace winrt::TerminalApp::implementation
             // launched _fullscreen_, toggle fullscreen mode. This will make sure
             // that the window size is _first_ set up as something sensible, so
             // leaving fullscreen returns to a reasonable size.
-            //
-            // We know at the start, that the root TerminalPage definitely isn't
-            // in focus nor fullscreen mode. So "Toggle" here will always work
-            // to "enable".
             const auto launchMode = this->GetLaunchMode();
-            if (IsQuakeWindow())
+            if (IsQuakeWindow() || WI_IsFlagSet(launchMode, LaunchMode::FocusMode))
             {
-                _root->ToggleFocusMode();
+                _root->SetFocusMode(true);
             }
-            else if (launchMode == LaunchMode::FullscreenMode)
+
+            // The IslandWindow handles (creating) the maximized state
+            // we just want to record it here on the page as well.
+            if (WI_IsFlagSet(launchMode, LaunchMode::MaximizedMode))
             {
-                _root->ToggleFullscreen();
+                _root->Maximized(true);
             }
-            else if (launchMode == LaunchMode::FocusMode ||
-                     launchMode == LaunchMode::MaximizedFocusMode)
+
+            if (WI_IsFlagSet(launchMode, LaunchMode::FullscreenMode))
             {
-                _root->ToggleFocusMode();
+                _root->SetFullscreen(true);
             }
         });
         _root->Create();
@@ -331,6 +302,9 @@ namespace winrt::TerminalApp::implementation
         _ApplyLanguageSettingChange();
         _RefreshThemeRoutine();
         _ApplyStartupTaskStateChange();
+
+        auto args = winrt::make_self<SystemMenuChangeArgs>(RS_(L"SettingsMenuItem"), SystemMenuChangeAction::Add, SystemMenuItemHandler(this, &AppLogic::_OpenSettingsUI));
+        _SystemMenuChangeRequestedHandlers(*this, *args);
 
         TraceLoggingWrite(
             g_hTerminalAppProvider,
@@ -373,6 +347,8 @@ namespace winrt::TerminalApp::implementation
             co_return ContentDialogResult::None;
         }
 
+        _dialog = dialog;
+
         // IMPORTANT: This is necessary as documented in the ContentDialog MSDN docs.
         // Since we're hosting the dialog in a Xaml island, we need to connect it to the
         // xaml tree somehow.
@@ -408,6 +384,16 @@ namespace winrt::TerminalApp::implementation
 
         // After the dialog is dismissed, the dialog lock (held by `lock`) will
         // be released so another can be shown
+    }
+
+    // Method Description:
+    // - Dismiss the (only) visible ContentDialog
+    void AppLogic::DismissDialog()
+    {
+        if (auto localDialog = std::exchange(_dialog, nullptr))
+        {
+            localDialog.Hide();
+        }
     }
 
     // Method Description:
@@ -488,27 +474,6 @@ namespace winrt::TerminalApp::implementation
             if (!warningText.empty())
             {
                 warningsTextBlock.Inlines().Append(_BuildErrorRun(warningText, ::winrt::Windows::UI::Xaml::Application::Current().as<::winrt::TerminalApp::App>().Resources()));
-
-                // The "LegacyGlobalsProperty" warning is special - it has a URL
-                // that goes with it. So we need to manually construct a
-                // Hyperlink and insert it along with the warning text.
-                if (warning == SettingsLoadWarnings::LegacyGlobalsProperty)
-                {
-                    // Add the URL here too
-                    const auto legacyGlobalsLinkLabel = RS_(L"LegacyGlobalsPropertyHrefLabel");
-                    const auto legacyGlobalsLinkUriValue = RS_(L"LegacyGlobalsPropertyHrefUrl");
-
-                    winrt::Windows::UI::Xaml::Documents::Run legacyGlobalsLinkText;
-                    winrt::Windows::UI::Xaml::Documents::Hyperlink legacyGlobalsLink;
-                    winrt::Windows::Foundation::Uri legacyGlobalsLinkUri{ legacyGlobalsLinkUriValue };
-
-                    legacyGlobalsLinkText.Text(legacyGlobalsLinkLabel);
-                    legacyGlobalsLink.NavigateUri(legacyGlobalsLinkUri);
-                    legacyGlobalsLink.Inlines().Append(legacyGlobalsLinkText);
-
-                    warningsTextBlock.Inlines().Append(legacyGlobalsLink);
-                }
-
                 warningsTextBlock.Inlines().Append(Documents::LineBreak{});
             }
         }
@@ -619,13 +584,11 @@ namespace winrt::TerminalApp::implementation
         winrt::Windows::Foundation::Size proposedSize{};
 
         const float scale = static_cast<float>(dpi) / static_cast<float>(USER_DEFAULT_SCREEN_DPI);
-        if (_root->ShouldUsePersistedLayout(_settings))
+        if (const auto layout = _root->LoadPersistedLayout(_settings))
         {
-            const auto layouts = ApplicationState::SharedInstance().PersistedWindowLayouts();
-
-            if (layouts && layouts.Size() > 0 && layouts.GetAt(0).InitialSize())
+            if (layout.InitialSize())
             {
-                proposedSize = layouts.GetAt(0).InitialSize().Value();
+                proposedSize = layout.InitialSize().Value();
                 // The size is saved as a non-scaled real pixel size,
                 // so we need to scale it appropriately.
                 proposedSize.Height = proposedSize.Height * scale;
@@ -698,6 +661,13 @@ namespace winrt::TerminalApp::implementation
         // commandline, then use that to override the value from the settings.
         const auto valueFromSettings = _settings.GlobalSettings().LaunchMode();
         const auto valueFromCommandlineArgs = _appArgs.GetLaunchMode();
+        if (const auto layout = _root->LoadPersistedLayout(_settings))
+        {
+            if (layout.LaunchMode())
+            {
+                return layout.LaunchMode().Value();
+            }
+        }
         return valueFromCommandlineArgs.has_value() ?
                    valueFromCommandlineArgs.value() :
                    valueFromSettings;
@@ -723,13 +693,11 @@ namespace winrt::TerminalApp::implementation
 
         auto initialPosition{ _settings.GlobalSettings().InitialPosition() };
 
-        if (_root->ShouldUsePersistedLayout(_settings))
+        if (const auto layout = _root->LoadPersistedLayout(_settings))
         {
-            const auto layouts = ApplicationState::SharedInstance().PersistedWindowLayouts();
-
-            if (layouts && layouts.Size() > 0 && layouts.GetAt(0).InitialPosition())
+            if (layout.InitialPosition())
             {
-                initialPosition = layouts.GetAt(0).InitialPosition().Value();
+                initialPosition = layout.InitialPosition().Value();
             }
         }
 
@@ -918,8 +886,6 @@ namespace winrt::TerminalApp::implementation
     void AppLogic::_RegisterSettingsChange()
     {
         const std::filesystem::path settingsPath{ std::wstring_view{ CascadiaSettings::SettingsPath() } };
-        const std::filesystem::path statePath{ std::wstring_view{ ApplicationState::SharedInstance().FilePath() } };
-
         _reader.create(
             settingsPath.parent_path().c_str(),
             false,
@@ -928,14 +894,29 @@ namespace winrt::TerminalApp::implementation
             // editors, who will write a temp file, then rename it to be the
             // actual file you wrote. So listen for that too.
             wil::FolderChangeEvents::FileName | wil::FolderChangeEvents::LastWriteTime,
-            [this, settingsBasename = settingsPath.filename(), stateBasename = statePath.filename()](wil::FolderChangeEvent, PCWSTR fileModified) {
-                const auto modifiedBasename = std::filesystem::path{ fileModified }.filename();
+            [this, settingsBasename = settingsPath.filename()](wil::FolderChangeEvent, PCWSTR fileModified) {
+                // DO NOT create a static reference to ApplicationState::SharedInstance here.
+                //
+                // ApplicationState::SharedInstance already caches its own
+                // static ref. If _we_ keep a static ref to the member in
+                // AppState, then our reference will keep ApplicationState alive
+                // after the `ActionToStringMap` gets cleaned up. Then, when we
+                // try to persist the actions in the window state, we won't be
+                // able to. We'll try to look up the action and the map just
+                // won't exist. We'll explode, even though the Terminal is
+                // tearing down anyways. So we'll just die, but still invoke
+                // WinDBG's post-mortem debugger, who won't be able to attach to
+                // the process that's already exiting.
+                //
+                // So DON'T ~give a mouse a cookie~ take a static ref here.
+
+                const winrt::hstring modifiedBasename{ std::filesystem::path{ fileModified }.filename().c_str() };
 
                 if (modifiedBasename == settingsBasename)
                 {
                     _reloadSettings->Run();
                 }
-                else if (modifiedBasename == stateBasename)
+                else if (ApplicationState::SharedInstance().IsStatePath(modifiedBasename))
                 {
                     _reloadState();
                 }
@@ -1062,6 +1043,11 @@ namespace winrt::TerminalApp::implementation
         _SettingsChangedHandlers(*this, nullptr);
     }
 
+    void AppLogic::_OpenSettingsUI()
+    {
+        _root->OpenSettingsUI();
+    }
+
     // Method Description:
     // - Returns a pointer to the global shared settings.
     [[nodiscard]] CascadiaSettings AppLogic::GetSettings() const noexcept
@@ -1170,10 +1156,22 @@ namespace winrt::TerminalApp::implementation
     // - <none>
     // Return Value:
     // - <none>
-    void AppLogic::WindowCloseButtonClicked()
+    void AppLogic::CloseWindow(LaunchPosition pos)
     {
         if (_root)
         {
+            // If persisted layout is enabled and we are the last window closing
+            // we should save our state.
+            if (_root->ShouldUsePersistedLayout(_settings) && _numOpenWindows == 1)
+            {
+                if (const auto layout = _root->GetWindowLayout())
+                {
+                    layout.InitialPosition(pos);
+                    const auto state = ApplicationState::SharedInstance();
+                    state.PersistedWindowLayouts(winrt::single_threaded_vector<WindowLayout>({ layout }));
+                }
+            }
+
             _root->CloseWindow(false);
         }
     }
@@ -1185,6 +1183,16 @@ namespace winrt::TerminalApp::implementation
             return _root->TaskbarState();
         }
         return {};
+    }
+
+    bool AppLogic::HasCommandlineArguments() const noexcept
+    {
+        return _hasCommandLineArguments;
+    }
+
+    bool AppLogic::HasSettingsStartupActions() const noexcept
+    {
+        return _hasSettingsStartupActions;
     }
 
     // Method Description:
@@ -1210,6 +1218,10 @@ namespace winrt::TerminalApp::implementation
             // then it contains only the executable name and no other arguments.
             _hasCommandLineArguments = args.size() > 1;
             _appArgs.ValidateStartupCommands();
+            if (const auto idx = _appArgs.GetPersistedLayoutIdx())
+            {
+                _root->SetPersistedLayoutIdx(idx.value());
+            }
             _root->SetStartupActions(_appArgs.GetStartupActions());
 
             // Check if we were started as a COM server for inbound connections of console sessions
@@ -1437,6 +1449,14 @@ namespace winrt::TerminalApp::implementation
         return _root ? _root->Fullscreen() : false;
     }
 
+    void AppLogic::Maximized(bool newMaximized)
+    {
+        if (_root)
+        {
+            _root->Maximized(newMaximized);
+        }
+    }
+
     bool AppLogic::AlwaysOnTop() const
     {
         return _root ? _root->AlwaysOnTop() : false;
@@ -1445,6 +1465,40 @@ namespace winrt::TerminalApp::implementation
     Windows::Foundation::Collections::IMapView<Microsoft::Terminal::Control::KeyChord, Microsoft::Terminal::Settings::Model::Command> AppLogic::GlobalHotkeys()
     {
         return _settings.GlobalSettings().ActionMap().GlobalHotkeys();
+    }
+
+    bool AppLogic::ShouldUsePersistedLayout()
+    {
+        return _root != nullptr ? _root->ShouldUsePersistedLayout(_settings) : false;
+    }
+
+    void AppLogic::SaveWindowLayoutJsons(const Windows::Foundation::Collections::IVector<hstring>& layouts)
+    {
+        std::vector<WindowLayout> converted;
+        converted.reserve(layouts.Size());
+
+        for (const auto& json : layouts)
+        {
+            if (json != L"")
+            {
+                converted.emplace_back(WindowLayout::FromJson(json));
+            }
+        }
+
+        ApplicationState::SharedInstance().PersistedWindowLayouts(winrt::single_threaded_vector(std::move(converted)));
+    }
+
+    hstring AppLogic::GetWindowLayoutJson(LaunchPosition position)
+    {
+        if (_root != nullptr)
+        {
+            if (const auto layout = _root->GetWindowLayout())
+            {
+                layout.InitialPosition(position);
+                return WindowLayout::ToJson(layout);
+            }
+        }
+        return L"";
     }
 
     void AppLogic::IdentifyWindow()
@@ -1478,8 +1532,17 @@ namespace winrt::TerminalApp::implementation
         }
     }
 
+    void AppLogic::SetPersistedLayoutIdx(const uint32_t idx)
+    {
+        if (_root)
+        {
+            _root->SetPersistedLayoutIdx(idx);
+        }
+    }
+
     void AppLogic::SetNumberOfOpenWindows(const uint64_t num)
     {
+        _numOpenWindows = num;
         if (_root)
         {
             _root->SetNumberOfOpenWindows(num);
@@ -1497,6 +1560,11 @@ namespace winrt::TerminalApp::implementation
     bool AppLogic::IsQuakeWindow() const noexcept
     {
         return _root->IsQuakeWindow();
+    }
+
+    void AppLogic::RequestExitFullscreen()
+    {
+        _root->SetFullscreen(false);
     }
 
     bool AppLogic::GetMinimizeToNotificationArea()

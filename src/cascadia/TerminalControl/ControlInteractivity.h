@@ -19,9 +19,9 @@
 #include "ControlInteractivity.g.h"
 #include "EventArgs.h"
 #include "../buffer/out/search.h"
-#include "cppwinrt_utils.h"
 
 #include "ControlCore.h"
+#include "../../renderer/uia/UiaRenderer.hpp"
 
 namespace ControlUnitTests
 {
@@ -35,6 +35,7 @@ namespace winrt::Microsoft::Terminal::Control::implementation
     {
     public:
         ControlInteractivity(IControlSettings settings,
+                             Control::IControlAppearance unfocusedAppearance,
                              TerminalConnection::ITerminalConnection connection);
 
         void GotFocus();
@@ -82,6 +83,7 @@ namespace winrt::Microsoft::Terminal::Control::implementation
                                       const Windows::Foundation::IReference<CopyFormat>& formats);
         void RequestPasteTextFromClipboard();
         void SetEndSelectionPoint(const til::point pixelPosition);
+        bool ManglePathsForWsl();
 
         TYPED_EVENT(OpenHyperlink, IInspectable, Control::OpenHyperlinkEventArgs);
         TYPED_EVENT(PasteFromClipboard, IInspectable, Control::PasteFromClipboardEventArgs);
@@ -141,6 +143,12 @@ namespace winrt::Microsoft::Terminal::Control::implementation
 
         void _sendPastedTextToConnection(std::wstring_view wstr);
         til::point _getTerminalPosition(const til::point& pixelPosition);
+
+        bool _sendMouseEventHelper(const til::point terminalPosition,
+                                   const unsigned int pointerUpdateKind,
+                                   const ::Microsoft::Terminal::Core::ControlKeyStates modifiers,
+                                   const SHORT wheelDelta,
+                                   Control::MouseButtonState buttonState);
 
         friend class ControlUnitTests::ControlCoreTests;
         friend class ControlUnitTests::ControlInteractivityTests;

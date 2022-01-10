@@ -7,6 +7,8 @@
 #include "resource.h"
 #include "icon.h"
 #include "NotificationIcon.h"
+#include <dwmapi.h>
+#include <TerminalThemeHelpers.h>
 
 extern "C" IMAGE_DOS_HEADER __ImageBase;
 
@@ -22,6 +24,7 @@ using namespace ::Microsoft::Console::Types;
 using VirtualKeyModifiers = winrt::Windows::System::VirtualKeyModifiers;
 
 #define XAML_HOSTING_WINDOW_CLASS_NAME L"CASCADIA_HOSTING_WINDOW_CLASS"
+#define IDM_SYSTEM_MENU_BEGIN 0x1000
 
 const UINT WM_TASKBARCREATED = RegisterWindowMessage(L"TaskbarCreated");
 
@@ -59,7 +62,14 @@ void IslandWindow::MakeWindow() noexcept
     // Create the window with the default size here - During the creation of the
     // window, the system will give us a chance to set its size in WM_CREATE.
     // WM_CREATE will be handled synchronously, before CreateWindow returns.
-    WINRT_VERIFY(CreateWindowEx(_alwaysOnTop ? WS_EX_TOPMOST : 0,
+    //
+    // We need WS_EX_NOREDIRECTIONBITMAP for vintage style opacity, GH#603
+    //
+    // WS_EX_LAYERED acts REAL WEIRD with TerminalTrySetTransparentBackground,
+    // but it works just fine when the window is in the TOPMOST group. But if
+    // you enable it always, activating the window will remove our DWM frame
+    // entirely. Weird.
+    WINRT_VERIFY(CreateWindowEx(WS_EX_NOREDIRECTIONBITMAP | (_alwaysOnTop ? WS_EX_TOPMOST : 0),
                                 wc.lpszClassName,
                                 L"Windows Terminal",
                                 WS_OVERLAPPEDWINDOW,
@@ -146,7 +156,7 @@ void IslandWindow::_HandleCreateWindow(const WPARAM, const LPARAM lParam) noexce
     }
 
     int nCmdShow = SW_SHOW;
-    if (launchMode == LaunchMode::MaximizedMode || launchMode == LaunchMode::MaximizedFocusMode)
+    if (WI_IsFlagSet(launchMode, LaunchMode::MaximizedMode))
     {
         nCmdShow = SW_MAXIMIZE;
     }
@@ -311,6 +321,12 @@ void IslandWindow::Initialize()
             _taskbar = std::move(taskbar);
         }
     }
+
+    _systemMenuNextItemId = IDM_SYSTEM_MENU_BEGIN;
+
+    // Enable vintage opacity by removing the XAML emergency backstop, GH#603.
+    // We don't really care if this failed or not.
+    TerminalTrySetTransparentBackground(true);
 }
 
 void IslandWindow::OnSize(const UINT width, const UINT height)
@@ -424,6 +440,7 @@ long IslandWindow::_calculateTotalSize(const bool isWidth, const long clientSize
         {
             _WindowActivatedHandlers();
         }
+
         break;
     }
 
@@ -454,6 +471,11 @@ long IslandWindow::_calculateTotalSize(const bool isWidth, const long clientSize
     }
     case WM_SIZE:
     {
+        if (wparam == SIZE_RESTORED || wparam == SIZE_MAXIMIZED)
+        {
+            _MaximizeChangedHandlers(wparam == SIZE_MAXIMIZED);
+        }
+
         if (wparam == SIZE_MINIMIZED && _isQuakeWindow)
         {
             ShowWindow(GetHandle(), SW_HIDE);
@@ -475,7 +497,7 @@ long IslandWindow::_calculateTotalSize(const bool isWidth, const long clientSize
         // If the user wants to close the app by clicking 'X' button,
         // we hand off the close experience to the app layer. If all the tabs
         // are closed, the window will be closed as well.
-        _windowCloseButtonClickedHandler();
+        _WindowCloseButtonClickedHandlers();
         return 0;
     }
     case WM_MOUSEWHEEL:
@@ -593,6 +615,27 @@ long IslandWindow::_calculateTotalSize(const bool isWidth, const long clientSize
     {
         _NotifyNotificationIconMenuItemSelectedHandlers((HMENU)lparam, (UINT)wparam);
         return 0;
+    }
+    case WM_SYSCOMMAND:
+    {
+        // the low 4 bits contain additional information (that we don't care about)
+        auto highBits = wparam & 0xFFF0;
+        if (highBits == SC_RESTORE || highBits == SC_MAXIMIZE)
+        {
+            _MaximizeChangedHandlers(highBits == SC_MAXIMIZE);
+        }
+
+        if (wparam == SC_RESTORE && _fullscreen)
+        {
+            _ShouldExitFullscreenHandlers();
+            return 0;
+        }
+        auto search = _systemMenuItems.find(LOWORD(wparam));
+        if (search != _systemMenuItems.end())
+        {
+            search->second.callback();
+        }
+        break;
     }
     default:
         // We'll want to receive this message when explorer.exe restarts
@@ -828,7 +871,7 @@ void IslandWindow::SetTaskbarProgress(const size_t state, const size_t progress)
 }
 
 // From GdiEngine::s_SetWindowLongWHelper
-void _SetWindowLongWHelper(const HWND hWnd, const int nIndex, const LONG dwNewLong) noexcept
+void SetWindowLongWHelper(const HWND hWnd, const int nIndex, const LONG dwNewLong) noexcept
 {
     // SetWindowLong has strange error handling. On success, it returns the
     // previous Window Long value and doesn't modify the Last Error state. To
@@ -919,14 +962,14 @@ void IslandWindow::_SetIsBorderless(const bool borderlessEnabled)
 
     // First, modify regular window styles as appropriate
     auto windowStyle = _getDesiredWindowStyle();
-    _SetWindowLongWHelper(hWnd, GWL_STYLE, windowStyle);
+    SetWindowLongWHelper(hWnd, GWL_STYLE, windowStyle);
 
     // Now modify extended window styles as appropriate
     // When moving to fullscreen, remove the window edge style to avoid an
     // ugly border when not focused.
     auto exWindowStyle = GetWindowLongW(hWnd, GWL_EXSTYLE);
     WI_UpdateFlag(exWindowStyle, WS_EX_WINDOWEDGE, !_fullscreen);
-    _SetWindowLongWHelper(hWnd, GWL_EXSTYLE, exWindowStyle);
+    SetWindowLongWHelper(hWnd, GWL_EXSTYLE, exWindowStyle);
 
     // Resize the window, with SWP_FRAMECHANGED, to trigger user32 to
     // recalculate the non/client areas
@@ -1064,14 +1107,14 @@ void IslandWindow::_SetIsFullscreen(const bool fullscreenEnabled)
 
     // First, modify regular window styles as appropriate
     auto windowStyle = _getDesiredWindowStyle();
-    _SetWindowLongWHelper(hWnd, GWL_STYLE, windowStyle);
+    SetWindowLongWHelper(hWnd, GWL_STYLE, windowStyle);
 
     // Now modify extended window styles as appropriate
     // When moving to fullscreen, remove the window edge style to avoid an
     // ugly border when not focused.
     auto exWindowStyle = GetWindowLongW(hWnd, GWL_EXSTYLE);
     WI_UpdateFlag(exWindowStyle, WS_EX_WINDOWEDGE, !_fullscreen);
-    _SetWindowLongWHelper(hWnd, GWL_EXSTYLE, exWindowStyle);
+    SetWindowLongWHelper(hWnd, GWL_EXSTYLE, exWindowStyle);
 
     // Only change the window position if changing fullscreen state.
     if (fChangingFullscreen)
@@ -1177,7 +1220,7 @@ void IslandWindow::_summonWindowRoutineBody(Remoting::SummonWindowBehavior args)
 {
     uint32_t actualDropdownDuration = args.DropdownDuration();
     // If the user requested an animation, let's check if animations are enabled in the OS.
-    if (args.DropdownDuration() > 0)
+    if (actualDropdownDuration > 0)
     {
         BOOL animationsEnabled = TRUE;
         SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &animationsEnabled, 0);
@@ -1703,5 +1746,47 @@ void IslandWindow::OpenSystemMenu(const std::optional<int> mouseX, const std::op
     }
 }
 
-DEFINE_EVENT(IslandWindow, DragRegionClicked, _DragRegionClickedHandlers, winrt::delegate<>);
-DEFINE_EVENT(IslandWindow, WindowCloseButtonClicked, _windowCloseButtonClickedHandler, winrt::delegate<>);
+void IslandWindow::AddToSystemMenu(const winrt::hstring& itemLabel, winrt::delegate<void()> callback)
+{
+    const HMENU systemMenu = GetSystemMenu(_window.get(), FALSE);
+    UINT wID = _systemMenuNextItemId;
+
+    MENUITEMINFOW item;
+    item.cbSize = sizeof(MENUITEMINFOW);
+    item.fMask = MIIM_STATE | MIIM_ID | MIIM_STRING;
+    item.fState = MF_ENABLED;
+    item.wID = wID;
+    item.dwTypeData = const_cast<LPWSTR>(itemLabel.c_str());
+    item.cch = static_cast<UINT>(itemLabel.size());
+
+    if (LOG_LAST_ERROR_IF(!InsertMenuItemW(systemMenu, wID, FALSE, &item)))
+    {
+        return;
+    }
+    _systemMenuItems.insert({ wID, { itemLabel, callback } });
+    _systemMenuNextItemId++;
+}
+
+void IslandWindow::RemoveFromSystemMenu(const winrt::hstring& itemLabel)
+{
+    const HMENU systemMenu = GetSystemMenu(_window.get(), FALSE);
+    int itemCount = GetMenuItemCount(systemMenu);
+    if (LOG_LAST_ERROR_IF(itemCount == -1))
+    {
+        return;
+    }
+
+    auto it = std::find_if(_systemMenuItems.begin(), _systemMenuItems.end(), [&itemLabel](const std::pair<UINT, SystemMenuItemInfo>& elem) {
+        return elem.second.label == itemLabel;
+    });
+    if (it == _systemMenuItems.end())
+    {
+        return;
+    }
+
+    if (LOG_LAST_ERROR_IF(!DeleteMenu(systemMenu, it->first, MF_BYCOMMAND)))
+    {
+        return;
+    }
+    _systemMenuItems.erase(it->first);
+}

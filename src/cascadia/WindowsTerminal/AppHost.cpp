@@ -20,6 +20,7 @@ using namespace winrt::Microsoft::Terminal;
 using namespace winrt::Microsoft::Terminal::Settings::Model;
 using namespace ::Microsoft::Console;
 using namespace ::Microsoft::Console::Types;
+using namespace std::chrono_literals;
 
 // This magic flag is "documented" at https://msdn.microsoft.com/en-us/library/windows/desktop/ms646301(v=vs.85).aspx
 // "If the high-order bit is 1, the key is down; otherwise, it is up."
@@ -29,7 +30,8 @@ AppHost::AppHost() noexcept :
     _app{},
     _windowManager{},
     _logic{ nullptr }, // don't make one, we're going to take a ref on app's
-    _window{ nullptr }
+    _window{ nullptr },
+    _getWindowLayoutThrottler{} // this will get set if we become the monarch
 {
     _logic = _app.Logic(); // get a ref to app's logic
 
@@ -82,7 +84,14 @@ AppHost::AppHost() noexcept :
     _window->WindowMoved({ this, &AppHost::_WindowMoved });
     _window->HotkeyPressed({ this, &AppHost::_GlobalHotkeyPressed });
     _window->SetAlwaysOnTop(_logic.GetInitialAlwaysOnTop());
+    _window->ShouldExitFullscreen({ &_logic, &winrt::TerminalApp::AppLogic::RequestExitFullscreen });
     _window->MakeWindow();
+
+    _GetWindowLayoutRequestedToken = _windowManager.GetWindowLayoutRequested([this](auto&&, const winrt::Microsoft::Terminal::Remoting::GetWindowLayoutArgs& args) {
+        // The peasants are running on separate threads, so they'll need to
+        // swap what context they are in to the ui thread to get the actual layout.
+        args.WindowLayoutJsonAsync(_GetWindowLayoutAsync());
+    });
 
     _windowManager.BecameMonarch({ this, &AppHost::_BecomeMonarch });
     if (_windowManager.IsMonarch())
@@ -220,7 +229,47 @@ void AppHost::_HandleCommandlineArgs()
         // is created.
         if (_windowManager.IsMonarch())
         {
-            _logic.SetNumberOfOpenWindows(_windowManager.GetNumberOfPeasants());
+            const auto numPeasants = _windowManager.GetNumberOfPeasants();
+            const auto layouts = ApplicationState::SharedInstance().PersistedWindowLayouts();
+            if (_logic.ShouldUsePersistedLayout() && layouts && layouts.Size() > 0)
+            {
+                uint32_t startIdx = 0;
+                // We want to create a window for every saved layout.
+                // If we are the only window, and no commandline arguments were provided
+                // then we should just use the current window to load the first layout.
+                // Otherwise create this window normally with its commandline, and create
+                // a new window using the first saved layout information.
+                // The 2nd+ layout will always get a new window.
+                if (numPeasants == 1 && !_logic.HasCommandlineArguments() && !_logic.HasSettingsStartupActions())
+                {
+                    _logic.SetPersistedLayoutIdx(startIdx);
+                    startIdx += 1;
+                }
+
+                // Create new windows for each of the other saved layouts.
+                for (const auto size = layouts.Size(); startIdx < size; startIdx += 1)
+                {
+                    auto newWindowArgs = fmt::format(L"{0} -w new -s {1}", args[0], startIdx);
+
+                    STARTUPINFO si;
+                    memset(&si, 0, sizeof(si));
+                    si.cb = sizeof(si);
+                    wil::unique_process_information pi;
+
+                    LOG_IF_WIN32_BOOL_FALSE(CreateProcessW(nullptr,
+                                                           newWindowArgs.data(),
+                                                           nullptr, // lpProcessAttributes
+                                                           nullptr, // lpThreadAttributes
+                                                           false, // bInheritHandles
+                                                           DETACHED_PROCESS | CREATE_UNICODE_ENVIRONMENT, // doCreationFlags
+                                                           nullptr, // lpEnvironment
+                                                           nullptr, // lpStartingDirectory
+                                                           &si, // lpStartupInfo
+                                                           &pi // lpProcessInformation
+                                                           ));
+                }
+            }
+            _logic.SetNumberOfOpenWindows(numPeasants);
         }
         _logic.WindowName(peasant.WindowName());
         _logic.WindowId(peasant.GetID());
@@ -257,7 +306,16 @@ void AppHost::Initialize()
 
     // Register the 'X' button of the window for a warning experience of multiple
     // tabs opened, this is consistent with Alt+F4 closing
-    _window->WindowCloseButtonClicked([this]() { _logic.WindowCloseButtonClicked(); });
+    _window->WindowCloseButtonClicked([this]() {
+        const auto pos = _GetWindowLaunchPosition();
+        _logic.CloseWindow(pos);
+    });
+    // If the user requests a close in another way handle the same as if the 'X'
+    // was clicked.
+    _logic.CloseRequested([this](auto&&, auto&&) {
+        const auto pos = _GetWindowLaunchPosition();
+        _logic.CloseWindow(pos);
+    });
 
     // Add an event handler to plumb clicks in the titlebar area down to the
     // application layer.
@@ -268,6 +326,15 @@ void AppHost::Initialize()
     _logic.FocusModeChanged({ this, &AppHost::_FocusModeChanged });
     _logic.AlwaysOnTopChanged({ this, &AppHost::_AlwaysOnTopChanged });
     _logic.RaiseVisualBell({ this, &AppHost::_RaiseVisualBell });
+    _logic.SystemMenuChangeRequested({ this, &AppHost::_SystemMenuChangeRequested });
+    _logic.ChangeMaximizeRequested({ this, &AppHost::_ChangeMaximizeRequested });
+
+    _window->MaximizeChanged([this](bool newMaximize) {
+        if (_logic)
+        {
+            _logic.Maximized(newMaximize);
+        }
+    });
 
     _logic.Create();
 
@@ -289,7 +356,7 @@ void AppHost::Initialize()
     _window->SetContent(_logic.GetRoot());
     _window->OnAppInitialized();
 
-    // THIS IS A HACK
+    // BODGY
     //
     // We've got a weird crash that happens terribly inconsistently, but pretty
     // readily on migrie's laptop, only in Debug mode. Apparently, there's some
@@ -344,7 +411,49 @@ void AppHost::LastTabClosed(const winrt::Windows::Foundation::IInspectable& /*se
         _HideNotificationIconRequested();
     }
 
+    // We don't want to try to save layouts if we are about to close.
+    _getWindowLayoutThrottler.reset();
+    _windowManager.GetWindowLayoutRequested(_GetWindowLayoutRequestedToken);
+    // We also don't need to update any of our bookkeeping on how many
+    // windows are open.
+    _windowManager.WindowCreated(_WindowCreatedToken);
+    _windowManager.WindowClosed(_WindowClosedToken);
+
+    // Remove ourself from the list of peasants so that we aren't included in
+    // any future requests. This will also mean we block until any existing
+    // event handler finishes.
+    _windowManager.SignalClose();
+
     _window->Close();
+}
+
+LaunchPosition AppHost::_GetWindowLaunchPosition()
+{
+    LaunchPosition pos{};
+    // If we started saving before closing, but didn't resume the event handler
+    // until after _window might be a nullptr.
+    if (!_window)
+    {
+        return pos;
+    }
+
+    try
+    {
+        // Get the position of the current window. This includes the
+        // non-client already.
+        const auto window = _window->GetWindowRect();
+
+        const auto dpi = _window->GetCurrentDpi();
+        const auto nonClientArea = _window->GetNonClientFrame(dpi);
+
+        // The nonClientArea adjustment is negative, so subtract that out.
+        // This way we save the user-visible location of the terminal.
+        pos.X = window.left - nonClientArea.left;
+        pos.Y = window.top;
+    }
+    CATCH_LOG();
+
+    return pos;
 }
 
 // Method Description:
@@ -539,6 +648,29 @@ void AppHost::_FullscreenChanged(const winrt::Windows::Foundation::IInspectable&
     _window->FullscreenChanged(_logic.Fullscreen());
 }
 
+void AppHost::_ChangeMaximizeRequested(const winrt::Windows::Foundation::IInspectable&,
+                                       const winrt::Windows::Foundation::IInspectable&)
+{
+    if (const auto handle = _window->GetHandle())
+    {
+        // Shamelessly copied from TitlebarControl::_OnMaximizeOrRestore
+        // since there doesn't seem to be another way to handle this
+        POINT point1 = {};
+        ::GetCursorPos(&point1);
+        const LPARAM lParam = MAKELPARAM(point1.x, point1.y);
+        WINDOWPLACEMENT placement = { sizeof(placement) };
+        ::GetWindowPlacement(handle, &placement);
+        if (placement.showCmd == SW_SHOWNORMAL)
+        {
+            ::PostMessage(handle, WM_SYSCOMMAND, SC_MAXIMIZE, lParam);
+        }
+        else if (placement.showCmd == SW_SHOWMAXIMIZED)
+        {
+            ::PostMessage(handle, WM_SYSCOMMAND, SC_RESTORE, lParam);
+        }
+    }
+}
+
 void AppHost::_AlwaysOnTopChanged(const winrt::Windows::Foundation::IInspectable&,
                                   const winrt::Windows::Foundation::IInspectable&)
 {
@@ -635,6 +767,36 @@ void AppHost::_DispatchCommandline(winrt::Windows::Foundation::IInspectable send
 }
 
 // Method Description:
+// - Asynchronously get the window layout from the current page. This is
+//   done async because we need to switch between the ui thread and the calling
+//   thread.
+// - NB: The peasant calling this must not be running on the UI thread, otherwise
+//   they will crash since they just call .get on the async operation.
+// Arguments:
+// - <none>
+// Return Value:
+// - The window layout as a json string.
+winrt::Windows::Foundation::IAsyncOperation<winrt::hstring> AppHost::_GetWindowLayoutAsync()
+{
+    winrt::apartment_context peasant_thread;
+
+    winrt::hstring layoutJson = L"";
+    // Use the main thread since we are accessing controls.
+    co_await winrt::resume_foreground(_logic.GetRoot().Dispatcher());
+    try
+    {
+        const auto pos = _GetWindowLaunchPosition();
+        layoutJson = _logic.GetWindowLayoutJson(pos);
+    }
+    CATCH_LOG()
+
+    // go back to give the result to the peasant.
+    co_await peasant_thread;
+
+    co_return layoutJson;
+}
+
+// Method Description:
 // - Event handler for the WindowManager::FindTargetWindowRequested event. The
 //   manager will ask us how to figure out what the target window is for a set
 //   of commandline arguments. We'll take those arguments, and ask AppLogic to
@@ -687,8 +849,19 @@ void AppHost::_BecomeMonarch(const winrt::Windows::Foundation::IInspectable& /*s
     // and subscribe for updates if there are any changes to that number.
     _logic.SetNumberOfOpenWindows(_windowManager.GetNumberOfPeasants());
 
-    _windowManager.WindowCreated([this](auto&&, auto&&) { _logic.SetNumberOfOpenWindows(_windowManager.GetNumberOfPeasants()); });
-    _windowManager.WindowClosed([this](auto&&, auto&&) { _logic.SetNumberOfOpenWindows(_windowManager.GetNumberOfPeasants()); });
+    _WindowCreatedToken = _windowManager.WindowCreated([this](auto&&, auto&&) {
+        if (_getWindowLayoutThrottler) {
+            _getWindowLayoutThrottler.value()();
+        }
+        _logic.SetNumberOfOpenWindows(_windowManager.GetNumberOfPeasants()); });
+
+    _WindowClosedToken = _windowManager.WindowClosed([this](auto&&, auto&&) {
+        if (_getWindowLayoutThrottler)
+        {
+            _getWindowLayoutThrottler.value()();
+        }
+        _logic.SetNumberOfOpenWindows(_windowManager.GetNumberOfPeasants());
+    });
 
     // These events are coming from peasants that become or un-become quake windows.
     _windowManager.ShowNotificationIconRequested([this](auto&&, auto&&) { _ShowNotificationIconRequested(); });
@@ -696,6 +869,76 @@ void AppHost::_BecomeMonarch(const winrt::Windows::Foundation::IInspectable& /*s
     // If the monarch receives a QuitAll event it will signal this event to be
     // ran before each peasant is closed.
     _windowManager.QuitAllRequested({ this, &AppHost::_QuitAllRequested });
+
+    // The monarch should be monitoring if it should save the window layout.
+    if (!_getWindowLayoutThrottler.has_value())
+    {
+        // We want at least some delay to prevent the first save from overwriting
+        // the data as we try load windows initially.
+        _getWindowLayoutThrottler.emplace(std::move(std::chrono::seconds(10)), std::move([this]() { _SaveWindowLayoutsRepeat(); }));
+        _getWindowLayoutThrottler.value()();
+    }
+}
+
+winrt::Windows::Foundation::IAsyncAction AppHost::_SaveWindowLayouts()
+{
+    // Make sure we run on a background thread to not block anything.
+    co_await winrt::resume_background();
+
+    if (_logic.ShouldUsePersistedLayout())
+    {
+        try
+        {
+            TraceLoggingWrite(g_hWindowsTerminalProvider,
+                              "AppHost_SaveWindowLayouts_Collect",
+                              TraceLoggingDescription("Logged when collecting window state"),
+                              TraceLoggingLevel(WINEVENT_LEVEL_VERBOSE),
+                              TraceLoggingKeyword(TIL_KEYWORD_TRACE));
+            const auto layoutJsons = _windowManager.GetAllWindowLayouts();
+            TraceLoggingWrite(g_hWindowsTerminalProvider,
+                              "AppHost_SaveWindowLayouts_Save",
+                              TraceLoggingDescription("Logged when writing window state"),
+                              TraceLoggingLevel(WINEVENT_LEVEL_VERBOSE),
+                              TraceLoggingKeyword(TIL_KEYWORD_TRACE));
+            _logic.SaveWindowLayoutJsons(layoutJsons);
+        }
+        catch (...)
+        {
+            LOG_CAUGHT_EXCEPTION();
+            TraceLoggingWrite(g_hWindowsTerminalProvider,
+                              "AppHost_SaveWindowLayouts_Failed",
+                              TraceLoggingDescription("An error occurred when collecting or writing window state"),
+                              TraceLoggingLevel(WINEVENT_LEVEL_VERBOSE),
+                              TraceLoggingKeyword(TIL_KEYWORD_TRACE));
+        }
+    }
+
+    co_return;
+}
+
+winrt::fire_and_forget AppHost::_SaveWindowLayoutsRepeat()
+{
+    // Make sure we run on a background thread to not block anything.
+    co_await winrt::resume_background();
+
+    co_await _SaveWindowLayouts();
+
+    // Don't need to save too frequently.
+    co_await 30s;
+
+    // As long as we are supposed to keep saving, request another save.
+    // This will be delayed by the throttler so that at most one save happens
+    // per 10 seconds, if a save is requested by another source simultaneously.
+    if (_getWindowLayoutThrottler.has_value())
+    {
+        TraceLoggingWrite(g_hWindowsTerminalProvider,
+                          "AppHost_requestGetLayout",
+                          TraceLoggingDescription("Logged when triggering a throttled write of the window state"),
+                          TraceLoggingLevel(WINEVENT_LEVEL_VERBOSE),
+                          TraceLoggingKeyword(TIL_KEYWORD_TRACE));
+
+        _getWindowLayoutThrottler.value()();
+    }
 }
 
 void AppHost::_listenForInboundConnections()
@@ -1046,10 +1289,18 @@ void AppHost::_RequestQuitAll(const winrt::Windows::Foundation::IInspectable&,
 }
 
 void AppHost::_QuitAllRequested(const winrt::Windows::Foundation::IInspectable&,
-                                const winrt::Windows::Foundation::IInspectable&)
+                                const winrt::Microsoft::Terminal::Remoting::QuitAllRequestedArgs& args)
 {
-    // TODO: GH#9800: For now, nothing needs to be done before the monarch closes all windows.
-    // Later when we have state saving that should go here.
+    // Make sure that the current timer is destroyed so that it doesn't attempt
+    // to run while we are in the middle of quitting.
+    if (_getWindowLayoutThrottler.has_value())
+    {
+        _getWindowLayoutThrottler.reset();
+    }
+
+    // Tell the monarch to wait for the window layouts to save before
+    // everyone quits.
+    args.BeforeQuitAllAction(_SaveWindowLayouts());
 }
 
 void AppHost::_SummonWindowRequested(const winrt::Windows::Foundation::IInspectable& sender,
@@ -1067,6 +1318,27 @@ void AppHost::_OpenSystemMenu(const winrt::Windows::Foundation::IInspectable&,
                               const winrt::Windows::Foundation::IInspectable&)
 {
     _window->OpenSystemMenu(std::nullopt, std::nullopt);
+}
+
+void AppHost::_SystemMenuChangeRequested(const winrt::Windows::Foundation::IInspectable&, const winrt::TerminalApp::SystemMenuChangeArgs& args)
+{
+    switch (args.Action())
+    {
+    case winrt::TerminalApp::SystemMenuChangeAction::Add:
+    {
+        auto handler = args.Handler();
+        _window->AddToSystemMenu(args.Name(), [handler]() { handler(); });
+        break;
+    }
+    case winrt::TerminalApp::SystemMenuChangeAction::Remove:
+    {
+        _window->RemoveFromSystemMenu(args.Name());
+        break;
+    }
+    default:
+    {
+    }
+    }
 }
 
 // Method Description:
@@ -1161,16 +1433,30 @@ void AppHost::_WindowMoved()
 {
     if (_logic)
     {
+        // Ensure any open ContentDialog is dismissed.
+        // Closing the popup in the UI tree as done below is not sufficient because
+        // it does not terminate the dialog's async operation.
+        _logic.DismissDialog();
+
         const auto root{ _logic.GetRoot() };
 
-        // This is basically DismissAllPopups which is also in
-        // TerminalSettingsEditor/Utils.h
-        // There isn't a good place that's shared between these two files, but
-        // it's only 5 LOC so whatever.
-        const auto popups{ Media::VisualTreeHelper::GetOpenPopupsForXamlRoot(root.XamlRoot()) };
-        for (const auto& p : popups)
+        try
         {
-            p.IsOpen(false);
+            // This is basically DismissAllPopups which is also in
+            // TerminalSettingsEditor/Utils.h
+            // There isn't a good place that's shared between these two files, but
+            // it's only 5 LOC so whatever.
+            const auto popups{ Media::VisualTreeHelper::GetOpenPopupsForXamlRoot(root.XamlRoot()) };
+            for (const auto& p : popups)
+            {
+                p.IsOpen(false);
+            }
+        }
+        catch (...)
+        {
+            // We purposely don't log here, because this is exceptionally noisy,
+            // especially on startup, when we're moving the window into place
+            // but might not have a real xamlRoot yet.
         }
     }
 }

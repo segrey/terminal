@@ -40,7 +40,9 @@
             <StackPanel Margin="{StaticResource StandardControlMargin}">
                 <local:SettingContainer x:Uid="AddProfile_Duplicate">
                     <muxc:RadioButtons x:Name="Profiles"
-                                       ItemsSource="{x:Bind State.Settings.AllProfiles, Mode=OneWay}">
+                                       AutomationProperties.AccessibilityView="Content"
+                                       ItemsSource="{x:Bind State.Settings.AllProfiles, Mode=OneWay}"
+                                       SelectionChanged="ProfilesSelectionChanged">
                         <muxc:RadioButtons.ItemTemplate>
                             <DataTemplate x:DataType="model:Profile">
                                 <Grid HorizontalAlignment="Stretch"
@@ -71,6 +73,7 @@
                         AutomationProperties.AutomationId="AddProfile_DuplicateButton"
                         AutomationProperties.Name="{Binding Tag, RelativeSource={RelativeSource Self}}"
                         Click="DuplicateClick"
+                        IsEnabled="{x:Bind IsProfileSelected, Mode=OneWay}"
                         Style="{StaticResource AccentButtonStyle}">
                     <Button.Content>
                         <StackPanel Orientation="Horizontal">

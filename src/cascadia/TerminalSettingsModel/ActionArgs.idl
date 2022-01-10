@@ -38,7 +38,9 @@ namespace Microsoft.Terminal.Settings.Model
         Previous,
         PreviousInOrder,
         NextInOrder,
-        First
+        First,
+        Parent,
+        Child
     };
 
     enum SplitDirection
@@ -205,6 +207,24 @@ namespace Microsoft.Terminal.Settings.Model
         SettingsTarget Target { get; };
     };
 
+    [default_interface] runtimeclass SetFocusModeArgs : IActionArgs
+    {
+        SetFocusModeArgs(Boolean isFocusMode);
+        Boolean IsFocusMode { get; };
+    };
+
+    [default_interface] runtimeclass SetFullScreenArgs : IActionArgs
+    {
+        SetFullScreenArgs(Boolean isFullScreen);
+        Boolean IsFullScreen { get; };
+    };
+
+    [default_interface] runtimeclass SetMaximizedArgs : IActionArgs
+    {
+        SetMaximizedArgs(Boolean isMaximized);
+        Boolean IsMaximized { get; };
+    };
+
     [default_interface] runtimeclass SetColorSchemeArgs : IActionArgs
     {
         SetColorSchemeArgs(String name);
@@ -213,11 +233,13 @@ namespace Microsoft.Terminal.Settings.Model
 
     [default_interface] runtimeclass SetTabColorArgs : IActionArgs
     {
+        SetTabColorArgs(Windows.UI.Color tabColor);
         Windows.Foundation.IReference<Windows.UI.Color> TabColor { get; };
     };
 
     [default_interface] runtimeclass RenameTabArgs : IActionArgs
     {
+        RenameTabArgs(String title);
         String Title { get; };
     };
 
@@ -294,6 +316,7 @@ namespace Microsoft.Terminal.Settings.Model
 
     [default_interface] runtimeclass RenameWindowArgs : IActionArgs
     {
+        RenameWindowArgs(String name);
         String Name { get; };
     };
 

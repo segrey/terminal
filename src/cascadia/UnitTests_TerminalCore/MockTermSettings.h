@@ -6,7 +6,6 @@
 #include "DefaultSettings.h"
 
 #include <winrt/Microsoft.Terminal.Core.h>
-#include "../inc/cppwinrt_utils.h"
 
 using namespace winrt::Microsoft::Terminal::Core;
 
@@ -74,6 +73,7 @@ namespace TerminalCoreUnitTests
         void DetectURLs(bool) {}
 
         WINRT_PROPERTY(bool, IntenseIsBright, true);
+        WINRT_PROPERTY(bool, AdjustIndistinguishableColors, true);
 
     private:
         int32_t _historySize;

@@ -1,4 +1,4 @@
-﻿/*++
+/*++
 Copyright (c) Microsoft Corporation
 Licensed under the MIT license.
 
@@ -219,12 +219,15 @@ JSON_ENUM_MAPPER(::winrt::Microsoft::Terminal::Settings::Model::FirstWindowPrefe
 
 JSON_ENUM_MAPPER(::winrt::Microsoft::Terminal::Settings::Model::LaunchMode)
 {
-    JSON_MAPPINGS(5) = {
+    JSON_MAPPINGS(8) = {
         pair_type{ "default", ValueType::DefaultMode },
         pair_type{ "maximized", ValueType::MaximizedMode },
         pair_type{ "fullscreen", ValueType::FullscreenMode },
+        pair_type{ "maximizedFullscreen", ValueType::MaximizedMode | ValueType::FullscreenMode },
         pair_type{ "focus", ValueType::FocusMode },
         pair_type{ "maximizedFocus", ValueType::MaximizedFocusMode },
+        pair_type{ "fullscreenFocus", ValueType::FullscreenMode | ValueType::FocusMode },
+        pair_type{ "maximizedFullscreenFocus", ValueType::MaximizedMode | ValueType::FullscreenMode | ValueType::FocusMode },
     };
 };
 
@@ -342,10 +345,38 @@ struct ::Microsoft::Terminal::Settings::Model::JsonUtils::ConversionTrait<::winr
     }
 };
 
+struct IntAsFloatPercentConversionTrait : ::Microsoft::Terminal::Settings::Model::JsonUtils::ConversionTrait<double>
+{
+    double FromJson(const Json::Value& json)
+    {
+        return ::base::saturated_cast<double>(json.asUInt()) / 100.0;
+    }
+
+    bool CanConvert(const Json::Value& json)
+    {
+        if (!json.isUInt())
+        {
+            return false;
+        }
+        const auto value = json.asUInt();
+        return value >= 0 && value <= 100;
+    }
+
+    Json::Value ToJson(const double& val)
+    {
+        return std::clamp(::base::saturated_cast<uint32_t>(std::round(val * 100.0)), 0u, 100u);
+    }
+
+    std::string TypeDescription() const
+    {
+        return "number (>= 0, <=100)";
+    }
+};
+
 // Possible FocusDirection values
 JSON_ENUM_MAPPER(::winrt::Microsoft::Terminal::Settings::Model::FocusDirection)
 {
-    JSON_MAPPINGS(8) = {
+    JSON_MAPPINGS(10) = {
         pair_type{ "left", ValueType::Left },
         pair_type{ "right", ValueType::Right },
         pair_type{ "up", ValueType::Up },
@@ -354,6 +385,8 @@ JSON_ENUM_MAPPER(::winrt::Microsoft::Terminal::Settings::Model::FocusDirection)
         pair_type{ "previousInOrder", ValueType::PreviousInOrder },
         pair_type{ "nextInOrder", ValueType::NextInOrder },
         pair_type{ "first", ValueType::First },
+        pair_type{ "parent", ValueType::Parent },
+        pair_type{ "child", ValueType::Child },
     };
 };
 
@@ -507,8 +540,9 @@ JSON_FLAG_MAPPER(::winrt::Microsoft::Terminal::Settings::Model::IntenseStyle)
 
 JSON_ENUM_MAPPER(::winrt::Microsoft::Terminal::Settings::Model::InfoBarMessage)
 {
-    JSON_MAPPINGS(2) = {
+    JSON_MAPPINGS(3) = {
         pair_type{ "closeOnExitInfo", ValueType::CloseOnExitInfo },
         pair_type{ "keyboardServiceWarning", ValueType::KeyboardServiceWarning },
+        pair_type{ "setAsDefault", ValueType::SetAsDefault },
     };
 };

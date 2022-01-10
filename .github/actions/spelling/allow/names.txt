@@ -9,6 +9,7 @@ Diviness
 dsafa
 duhowett
 ekg
+eryksun
 ethanschoonover
 Firefox
 Gatta
@@ -53,6 +54,7 @@ oldnewthing
 opengl
 osgwiki
 pabhojwa
+panos
 paulcam
 pauldotknopf
 PGP

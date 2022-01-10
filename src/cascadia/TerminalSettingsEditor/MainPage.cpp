@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft Corporation.
+// Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
 #include "pch.h"
@@ -8,7 +8,6 @@
 #include "Interaction.h"
 #include "Rendering.h"
 #include "Actions.h"
-#include "ReadOnlyActions.h"
 #include "Profiles.h"
 #include "GlobalAppearance.h"
 #include "ColorSchemes.h"
@@ -293,32 +292,17 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
         }
         else if (clickedItemTag == actionsTag)
         {
-            if constexpr (Feature_EditableActionsPage::IsEnabled())
-            {
-                contentFrame().Navigate(xaml_typename<Editor::Actions>(), winrt::make<ActionsPageNavigationState>(_settingsClone));
-            }
-            else
-            {
-                auto actionsState{ winrt::make<ReadOnlyActionsPageNavigationState>(_settingsClone) };
-                actionsState.OpenJson([weakThis = get_weak()](auto&&, auto&& arg) {
-                    if (auto self{ weakThis.get() })
-                    {
-                        self->_OpenJsonHandlers(nullptr, arg);
-                    }
-                });
-                contentFrame().Navigate(xaml_typename<Editor::ReadOnlyActions>(), actionsState);
-            }
+            contentFrame().Navigate(xaml_typename<Editor::Actions>(), winrt::make<ActionsPageNavigationState>(_settingsClone));
         }
         else if (clickedItemTag == globalProfileTag)
         {
             auto profileVM{ _viewModelForProfile(_settingsClone.ProfileDefaults(), _settingsClone) };
             profileVM.IsBaseLayer(true);
-            _lastProfilesNavState = winrt::make<ProfilePageNavigationState>(profileVM,
-                                                                            _settingsClone.GlobalSettings().ColorSchemes(),
-                                                                            _lastProfilesNavState,
-                                                                            *this);
+            auto state{ winrt::make<ProfilePageNavigationState>(profileVM,
+                                                                _settingsClone.GlobalSettings().ColorSchemes(),
+                                                                *this) };
 
-            contentFrame().Navigate(xaml_typename<Editor::Profiles>(), _lastProfilesNavState);
+            contentFrame().Navigate(xaml_typename<Editor::Profiles>(), state);
         }
         else if (clickedItemTag == colorSchemesTag)
         {
@@ -343,15 +327,14 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
     // - profile - the profile object we are getting a view of
     void MainPage::_Navigate(const Editor::ProfileViewModel& profile)
     {
-        _lastProfilesNavState = winrt::make<ProfilePageNavigationState>(profile,
-                                                                        _settingsClone.GlobalSettings().ColorSchemes(),
-                                                                        _lastProfilesNavState,
-                                                                        *this);
+        auto state{ winrt::make<ProfilePageNavigationState>(profile,
+                                                            _settingsClone.GlobalSettings().ColorSchemes(),
+                                                            *this) };
 
         // Add an event handler for when the user wants to delete a profile.
-        _lastProfilesNavState.DeleteProfile({ this, &MainPage::_DeleteProfile });
+        profile.DeleteProfile({ this, &MainPage::_DeleteProfile });
 
-        contentFrame().Navigate(xaml_typename<Editor::Profiles>(), _lastProfilesNavState);
+        contentFrame().Navigate(xaml_typename<Editor::Profiles>(), state);
     }
 
     void MainPage::OpenJsonTapped(IInspectable const& /*sender*/, Windows::UI::Xaml::Input::TappedRoutedEventArgs const& /*args*/)

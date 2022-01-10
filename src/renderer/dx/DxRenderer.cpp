@@ -88,7 +88,7 @@ DxEngine::DxEngine() :
     _forceFullRepaintRendering{ false },
     _softwareRendering{ false },
     _antialiasingMode{ D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE },
-    _defaultTextBackgroundOpacity{ 1.0f },
+    _defaultBackgroundIsTransparent{ true },
     _hwndTarget{ static_cast<HWND>(INVALID_HANDLE_VALUE) },
     _sizeTarget{},
     _dpi{ USER_DEFAULT_SCREEN_DPI },
@@ -244,9 +244,11 @@ bool DxEngine::_HasTerminalEffects() const noexcept
 // Arguments:
 // Return Value:
 // - Void
-void DxEngine::ToggleShaderEffects()
+void DxEngine::ToggleShaderEffects() noexcept
 {
     _terminalEffectsEnabled = !_terminalEffectsEnabled;
+    _recreateDeviceRequested = true;
+#pragma warning(suppress : 26447) // The function is declared 'noexcept' but calls function 'Log_IfFailed()' which may throw exceptions (f.6).
     LOG_IF_FAILED(InvalidateAll());
 }
 
@@ -493,6 +495,7 @@ void DxEngine::_ComputePixelShaderSettings() noexcept
 //   actual failure from the API itself.
 [[nodiscard]] HRESULT DxEngine::_CreateSurfaceHandle() noexcept
 {
+#pragma warning(suppress : 26447)
     wil::unique_hmodule hDComp{ LoadLibraryEx(L"Dcomp.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32) };
     RETURN_LAST_ERROR_IF(hDComp.get() == nullptr);
 
@@ -908,7 +911,7 @@ void DxEngine::_ReleaseDeviceResources() noexcept
     // someone has chosen the slower ClearType antialiasing (versus the faster
     // grayscale antialiasing)
     const bool usingCleartype = _antialiasingMode == D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE;
-    const bool usingTransparency = _defaultTextBackgroundOpacity != 1.0f;
+    const bool usingTransparency = _defaultBackgroundIsTransparent;
     // Another way of naming "bgIsDefault" is "bgHasTransparency"
     const auto bgIsDefault = (_backgroundColor.a == _defaultBackgroundColor.a) &&
                              (_backgroundColor.r == _defaultBackgroundColor.r) &&
@@ -967,14 +970,14 @@ try
 }
 CATCH_RETURN();
 
-void DxEngine::SetCallback(std::function<void()> pfn)
+void DxEngine::SetCallback(std::function<void()> pfn) noexcept
 {
-    _pfn = pfn;
+    _pfn = std::move(pfn);
 }
 
-void DxEngine::SetWarningCallback(std::function<void(const HRESULT)> pfn)
+void DxEngine::SetWarningCallback(std::function<void(const HRESULT)> pfn) noexcept
 {
-    _pfnWarningCallback = pfn;
+    _pfnWarningCallback = std::move(pfn);
 }
 
 bool DxEngine::GetRetroTerminalEffect() const noexcept
@@ -1044,11 +1047,12 @@ try
 }
 CATCH_LOG()
 
-HANDLE DxEngine::GetSwapChainHandle()
+HANDLE DxEngine::GetSwapChainHandle() noexcept
 {
     if (!_swapChainHandle)
     {
-        THROW_IF_FAILED(_CreateDeviceResources(true));
+#pragma warning(suppress : 26447) // The function is declared 'noexcept' but calls function 'Log_IfFailed()' which may throw exceptions (f.6).
+        LOG_IF_FAILED(_CreateDeviceResources(true));
     }
 
     return _swapChainHandle.get();
@@ -1496,18 +1500,13 @@ CATCH_RETURN()
 // - See https://docs.microsoft.com/en-us/windows/uwp/gaming/reduce-latency-with-dxgi-1-3-swap-chains.
 void DxEngine::WaitUntilCanRender() noexcept
 {
-    if (!_swapChainFrameLatencyWaitableObject)
-    {
-        return;
-    }
+    // Throttle the DxEngine a bit down to ~60 FPS.
+    // This improves throughput for rendering complex or colored text.
+    Sleep(8);
 
-    const auto ret = WaitForSingleObjectEx(
-        _swapChainFrameLatencyWaitableObject.get(),
-        1000, // 1 second timeout (shouldn't ever occur)
-        true);
-    if (ret != WAIT_OBJECT_0)
+    if (_swapChainFrameLatencyWaitableObject)
     {
-        LOG_WIN32_MSG(ret, "Waiting for swap chain frame latency waitable object returned error or timeout.");
+        WaitForSingleObjectEx(_swapChainFrameLatencyWaitableObject.get(), 100, true);
     }
 }
 
@@ -1704,7 +1703,7 @@ CATCH_RETURN()
 //               - We will draw rightward (+X) from here
 // Return Value:
 // - S_OK or relevant DirectX error
-[[nodiscard]] HRESULT DxEngine::PaintBufferGridLines(GridLines const lines,
+[[nodiscard]] HRESULT DxEngine::PaintBufferGridLines(GridLineSet const lines,
                                                      COLORREF const color,
                                                      size_t const cchLine,
                                                      COORD const coordTarget) noexcept
@@ -1731,13 +1730,13 @@ try
     // offset by half the stroke width. For the start coordinate we add half
     // the stroke width, and for the end coordinate we subtract half the width.
     const DxFontRenderData::LineMetrics lineMetrics = _fontRenderData->GetLineMetrics();
-    if (WI_IsAnyFlagSet(lines, (GridLines::Left | GridLines::Right)))
+    if (lines.any(GridLines::Left, GridLines::Right))
     {
         const auto halfGridlineWidth = lineMetrics.gridlineWidth / 2.0f;
         const auto startY = target.y + halfGridlineWidth;
         const auto endY = target.y + font.height - halfGridlineWidth;
 
-        if (WI_IsFlagSet(lines, GridLines::Left))
+        if (lines.test(GridLines::Left))
         {
             auto x = target.x + halfGridlineWidth;
             for (size_t i = 0; i < cchLine; i++, x += font.width)
@@ -1746,7 +1745,7 @@ try
             }
         }
 
-        if (WI_IsFlagSet(lines, GridLines::Right))
+        if (lines.test(GridLines::Right))
         {
             auto x = target.x + font.width - halfGridlineWidth;
             for (size_t i = 0; i < cchLine; i++, x += font.width)
@@ -1756,19 +1755,19 @@ try
         }
     }
 
-    if (WI_IsAnyFlagSet(lines, GridLines::Top | GridLines::Bottom))
+    if (lines.any(GridLines::Top, GridLines::Bottom))
     {
         const auto halfGridlineWidth = lineMetrics.gridlineWidth / 2.0f;
         const auto startX = target.x + halfGridlineWidth;
         const auto endX = target.x + fullRunWidth - halfGridlineWidth;
 
-        if (WI_IsFlagSet(lines, GridLines::Top))
+        if (lines.test(GridLines::Top))
         {
             const auto y = target.y + halfGridlineWidth;
             DrawLine(startX, y, endX, y, lineMetrics.gridlineWidth);
         }
 
-        if (WI_IsFlagSet(lines, GridLines::Bottom))
+        if (lines.test(GridLines::Bottom))
         {
             const auto y = target.y + font.height - halfGridlineWidth;
             DrawLine(startX, y, endX, y, lineMetrics.gridlineWidth);
@@ -1778,24 +1777,24 @@ try
     // In the case of the underline and strikethrough offsets, the stroke width
     // is already accounted for, so they don't require further adjustments.
 
-    if (WI_IsAnyFlagSet(lines, GridLines::Underline | GridLines::DoubleUnderline | GridLines::HyperlinkUnderline))
+    if (lines.any(GridLines::Underline, GridLines::DoubleUnderline, GridLines::HyperlinkUnderline))
     {
         const auto halfUnderlineWidth = lineMetrics.underlineWidth / 2.0f;
         const auto startX = target.x + halfUnderlineWidth;
         const auto endX = target.x + fullRunWidth - halfUnderlineWidth;
         const auto y = target.y + lineMetrics.underlineOffset;
 
-        if (WI_IsFlagSet(lines, GridLines::Underline))
+        if (lines.test(GridLines::Underline))
         {
             DrawLine(startX, y, endX, y, lineMetrics.underlineWidth);
         }
 
-        if (WI_IsFlagSet(lines, GridLines::HyperlinkUnderline))
+        if (lines.test(GridLines::HyperlinkUnderline))
         {
             DrawHyperlinkLine(startX, y, endX, y, lineMetrics.underlineWidth);
         }
 
-        if (WI_IsFlagSet(lines, GridLines::DoubleUnderline))
+        if (lines.test(GridLines::DoubleUnderline))
         {
             DrawLine(startX, y, endX, y, lineMetrics.underlineWidth);
             const auto y2 = target.y + lineMetrics.underlineOffset2;
@@ -1803,7 +1802,7 @@ try
         }
     }
 
-    if (WI_IsFlagSet(lines, GridLines::Strikethrough))
+    if (lines.test(GridLines::Strikethrough))
     {
         const auto halfStrikethroughWidth = lineMetrics.strikethroughWidth / 2.0f;
         const auto startX = target.x + halfStrikethroughWidth;
@@ -1928,20 +1927,16 @@ CATCH_RETURN()
                                                      const bool /*usingSoftFont*/,
                                                      const bool isSettingDefaultBrushes) noexcept
 {
-    // GH#5098: If we're rendering with cleartype text, we need to always render
-    // onto an opaque background. If our background's opacity is 1.0f, that's
-    // great, we can actually use cleartype in that case. In that scenario
-    // (cleartype && opacity == 1.0), we'll force the opacity bits of the
-    // COLORREF to 0xff so we draw as cleartype. In any other case, leave the
-    // opacity bits unchanged. PaintBufferLine will later do some logic to
-    // determine if we should paint the text as grayscale or not.
-    const bool usingCleartype = _antialiasingMode == D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE;
-    const bool usingTransparency = _defaultTextBackgroundOpacity != 1.0f;
-    const bool forceOpaqueBG = usingCleartype && !usingTransparency;
-
     const auto [colorForeground, colorBackground] = pData->GetAttributeColors(textAttributes);
 
+    const bool usingCleartype = _antialiasingMode == D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE;
+    const bool usingTransparency = _defaultBackgroundIsTransparent;
+    const bool forceOpaqueBG = usingCleartype && !usingTransparency;
+
     _foregroundColor = _ColorFFromColorRef(OPACITY_OPAQUE | colorForeground);
+    // October 2021: small changes were made to the way BG color interacts with
+    // grayscale AA, esp. with regards to acrylic and GH#5098. See comment in
+    // _ShouldForceGrayscaleAA for more details.
     _backgroundColor = _ColorFFromColorRef((forceOpaqueBG ? OPACITY_OPAQUE : 0) | colorBackground);
 
     _d2dBrushForeground->SetColor(_foregroundColor);
@@ -2021,7 +2016,7 @@ try
 }
 CATCH_RETURN();
 
-[[nodiscard]] Viewport DxEngine::GetViewportInCharacters(const Viewport& viewInPixels) noexcept
+[[nodiscard]] Viewport DxEngine::GetViewportInCharacters(const Viewport& viewInPixels) const noexcept
 {
     const short widthInChars = base::saturated_cast<short>(viewInPixels.Width() / _fontRenderData->GlyphCell().width());
     const short heightInChars = base::saturated_cast<short>(viewInPixels.Height() / _fontRenderData->GlyphCell().height());
@@ -2029,7 +2024,7 @@ CATCH_RETURN();
     return Viewport::FromDimensions(viewInPixels.Origin(), { widthInChars, heightInChars });
 }
 
-[[nodiscard]] Viewport DxEngine::GetViewportInPixels(const Viewport& viewInCharacters) noexcept
+[[nodiscard]] Viewport DxEngine::GetViewportInPixels(const Viewport& viewInCharacters) const noexcept
 {
     const short widthInPixels = base::saturated_cast<short>(viewInCharacters.Width() * _fontRenderData->GlyphCell().width());
     const short heightInPixels = base::saturated_cast<short>(viewInCharacters.Height() * _fontRenderData->GlyphCell().height());
@@ -2238,14 +2233,19 @@ CATCH_LOG()
 //   rendering onto a transparent surface (like acrylic), then cleartype won't
 //   work correctly, and will actually just additively blend with the
 //   background. This is here to support GH#5098.
+// - We'll use this, along with whether cleartype was requested, to manually set
+//   the alpha channel of the background brush to 1.0. We need to do that to
+//   make cleartype work without blending. However, we don't want to do that too
+//   often - if we do that on top of a transparent BG, then the entire swap
+//   chain will be fully opaque.
 // Arguments:
-// - opacity: the new opacity of our background, on [0.0f, 1.0f]
+// - isTransparent: true if our BG is transparent (acrylic, or anything that's not fully opaque)
 // Return Value:
 // - <none>
-void DxEngine::SetDefaultTextBackgroundOpacity(const float opacity) noexcept
+void DxEngine::EnableTransparentBackground(const bool isTransparent) noexcept
 try
 {
-    _defaultTextBackgroundOpacity = opacity;
+    _defaultBackgroundIsTransparent = isTransparent;
 
     // Make sure we redraw all the cells, to update whether they're actually
     // drawn with cleartype or not.

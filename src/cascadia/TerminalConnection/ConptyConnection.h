@@ -5,7 +5,6 @@
 
 #include "ConptyConnection.g.h"
 #include "ConnectionStateHolder.h"
-#include "../inc/cppwinrt_utils.h"
 
 #include <conpty-static.h>
 
@@ -38,6 +37,7 @@ namespace winrt::Microsoft::Terminal::TerminalConnection::implementation
         void ClearBuffer();
 
         winrt::guid Guid() const noexcept;
+        winrt::hstring Commandline() const;
 
         static void StartInboundListener();
         static void StopInboundListener();
@@ -56,11 +56,12 @@ namespace winrt::Microsoft::Terminal::TerminalConnection::implementation
         WINRT_CALLBACK(TerminalOutput, TerminalOutputHandler);
 
     private:
+        static HRESULT NewHandoff(HANDLE in, HANDLE out, HANDLE signal, HANDLE ref, HANDLE server, HANDLE client) noexcept;
+        static winrt::hstring _commandlineFromProcess(HANDLE process);
+
         HRESULT _LaunchAttachedClient() noexcept;
         void _indicateExitWithStatus(unsigned int status) noexcept;
         void _ClientTerminated() noexcept;
-
-        static HRESULT NewHandoff(HANDLE in, HANDLE out, HANDLE signal, HANDLE ref, HANDLE server, HANDLE client) noexcept;
 
         uint32_t _initialRows{};
         uint32_t _initialCols{};
@@ -95,7 +96,5 @@ namespace winrt::Microsoft::Terminal::TerminalConnection::implementation
 
 namespace winrt::Microsoft::Terminal::TerminalConnection::factory_implementation
 {
-    struct ConptyConnection : ConptyConnectionT<ConptyConnection, implementation::ConptyConnection>
-    {
-    };
+    BASIC_FACTORY(ConptyConnection);
 }

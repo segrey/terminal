@@ -67,41 +67,21 @@ namespace winrt::TerminalApp::implementation
     // - <none>
     void TerminalPage::_EndPreviewColorScheme()
     {
-        // Get the focused control
-        if (const auto& activeControl{ _GetActiveControl() })
+        // Apply the reverts in reverse order - If we had multiple previews
+        // stacked on top of each other, then this will ensure the first one in
+        // is the last one out.
+        for (auto i{ _restorePreviewFuncs.rbegin() }; i < _restorePreviewFuncs.rend(); i++)
         {
-            // Get the runtime settings of the focused control
-            const auto& controlSettings{ activeControl.Settings().as<TerminalSettings>() };
-
-            // Get the control's root settings, the ones that we actually
-            // assigned to it.
-            auto parentSettings{ controlSettings.GetParent() };
-            while (parentSettings.GetParent() != nullptr)
-            {
-                parentSettings = parentSettings.GetParent();
-            }
-
-            // If the root settings are the same as the ones we stashed,
-            // then reset the parent of the runtime settings to the stashed
-            // settings. This condition might be false if the settings
-            // hot-reloaded while the palette was open. In that case, we
-            // don't want to reset the settings to what they were _before_
-            // the hot-reload.
-            if (_originalSettings == parentSettings)
-            {
-                // Set the original settings as the parent of the control's settings
-                activeControl.Settings().as<TerminalSettings>().SetParent(_originalSettings);
-            }
-
-            activeControl.UpdateSettings();
+            auto f = *i;
+            f();
         }
-        _originalSettings = nullptr;
+        _restorePreviewFuncs.clear();
     }
 
     // Method Description:
     // - Preview handler for the SetColorScheme action.
-    // - This method will stash the settings of the current control in
-    //   _originalSettings. Then it will create a new TerminalSettings object
+    // - This method will stash functions to reset the settings of the selected controls in
+    //   _restorePreviewFuncs. Then it will create a new TerminalSettings object
     //   with only the properties from the ColorScheme set. It'll _insert_ a
     //   TerminalSettings between the control's root settings (built from
     //   CascadiaSettings) and the control's runtime settings. That'll cause the
@@ -112,33 +92,22 @@ namespace winrt::TerminalApp::implementation
     // - <none>
     void TerminalPage::_PreviewColorScheme(const Settings::Model::SetColorSchemeArgs& args)
     {
-        // Get the focused control
-        if (const auto& activeControl{ _GetActiveControl() })
+        if (const auto& scheme{ _settings.GlobalSettings().ColorSchemes().TryLookup(args.SchemeName()) })
         {
-            if (const auto& scheme{ _settings.GlobalSettings().ColorSchemes().TryLookup(args.SchemeName()) })
-            {
-                // Get the settings of the focused control and stash them
-                const auto& controlSettings = activeControl.Settings().as<TerminalSettings>();
-                // Make sure to recurse up to the root - if you're doing
-                // this while you're currently previewing a SetColorScheme
-                // action, then the parent of the control's settings is _the
-                // last preview TerminalSettings we inserted! We don't want
-                // to save that one!
-                _originalSettings = controlSettings.GetParent();
-                while (_originalSettings.GetParent() != nullptr)
-                {
-                    _originalSettings = _originalSettings.GetParent();
-                }
-                // Create a new child for those settings
-                TerminalSettingsCreateResult fake{ _originalSettings };
-                const auto& childStruct = TerminalSettings::CreateWithParent(fake);
-                // Modify the child to have the applied color scheme
-                childStruct.DefaultSettings().ApplyColorScheme(scheme);
+            _ApplyToActiveControls([&](const auto& control) {
+                // Stash a copy of the current scheme.
+                auto originalScheme{ control.ColorScheme() };
 
-                // Insert that new child as the parent of the control's settings
-                controlSettings.SetParent(childStruct.DefaultSettings());
-                activeControl.UpdateSettings();
-            }
+                // Apply the new scheme.
+                control.ColorScheme(scheme.ToCoreScheme());
+
+                // Each control will emplace a revert into the
+                // _restorePreviewFuncs for itself.
+                _restorePreviewFuncs.emplace_back([=]() {
+                    // On dismiss, restore the original scheme.
+                    control.ColorScheme(originalScheme);
+                });
+            });
         }
     }
 

@@ -71,11 +71,9 @@
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <PrecompiledHeaderOutputFile>$(IntDir)pch.pch</PrecompiledHeaderOutputFile>
 
-      <!-- All new code should be in non-permissive mode. Big objects for C++/WinRT. -->
-      <ConformanceMode>true</ConformanceMode>
-      <UseStandardPreprocessor>true</UseStandardPreprocessor>
-      <AdditionalOptions>%(AdditionalOptions) /bigobj /Zc:twoPhase-</AdditionalOptions>
-      <DisableSpecificWarnings>5104;5105;28204;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <!-- Big objects for C++/WinRT. -->
+      <AdditionalOptions>%(AdditionalOptions) /bigobj</AdditionalOptions>
+      <DisableSpecificWarnings>5104;28204;%(DisableSpecificWarnings)</DisableSpecificWarnings>
 
       <AdditionalUsingDirectories>$(WindowsSDK_WindowsMetadata);$(AdditionalUsingDirectories)</AdditionalUsingDirectories>
     </ClCompile>
@@ -87,7 +85,7 @@
 
   <ItemDefinitionGroup>
     <ClCompile>
-      <AdditionalIncludeDirectories>$(OpenConsoleDir)\src\cascadia\WinRTUtils\inc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(OpenConsoleDir)\src\cascadia\WinRTUtils\inc;$(OpenConsoleDir)src\cascadia\inc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <AdditionalDependencies>WindowsApp.lib;%(AdditionalDependencies)</AdditionalDependencies>

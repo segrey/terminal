@@ -71,7 +71,7 @@ namespace ControlUnitTests
                                     TerminalConnection::ITerminalConnection conn)
         {
             Log::Comment(L"Create ControlInteractivity object");
-            auto interactivity = winrt::make_self<Control::implementation::ControlInteractivity>(settings, conn);
+            auto interactivity = winrt::make_self<Control::implementation::ControlInteractivity>(settings, settings, conn);
             VERIFY_IS_NOT_NULL(interactivity);
             auto core = interactivity->_core;
             core->_inUnitTests = true;
@@ -99,10 +99,16 @@ namespace ControlUnitTests
 
         WEX::TestExecution::SetVerifyOutput verifyOutputScope{ WEX::TestExecution::VerifyOutputSettings::LogOnlyFailures };
 
+        BEGIN_TEST_METHOD_PROPERTIES()
+            TEST_METHOD_PROPERTY(L"Data:useAcrylic", L"{true, false}")
+        END_TEST_METHOD_PROPERTIES()
+        bool useAcrylic;
+        VERIFY_SUCCEEDED(TestData::TryGetValue(L"useAcrylic", useAcrylic), L"whether or not we should enable acrylic");
+
         auto [settings, conn] = _createSettingsAndConnection();
 
-        settings->UseAcrylic(true);
-        settings->TintOpacity(0.5f);
+        settings->UseAcrylic(useAcrylic);
+        settings->Opacity(0.5f);
 
         auto [core, interactivity] = _createCoreAndInteractivity(*settings, *conn);
 
@@ -110,16 +116,14 @@ namespace ControlUnitTests
         double expectedOpacity = 0.5;
         auto opacityCallback = [&](auto&&, Control::TransparencyChangedEventArgs args) mutable {
             VERIFY_ARE_EQUAL(expectedOpacity, args.Opacity());
-            VERIFY_ARE_EQUAL(expectedOpacity, settings->TintOpacity());
-            VERIFY_ARE_EQUAL(expectedOpacity, core->_settings.TintOpacity());
+            VERIFY_ARE_EQUAL(expectedOpacity, core->Opacity());
+            // The Settings object's opacity shouldn't be changed
+            VERIFY_ARE_EQUAL(0.5, settings->Opacity());
 
-            if (expectedOpacity < 1.0)
-            {
-                VERIFY_IS_TRUE(settings->UseAcrylic());
-                VERIFY_IS_TRUE(core->_settings.UseAcrylic());
-            }
-            VERIFY_ARE_EQUAL(expectedOpacity < 1.0, settings->UseAcrylic());
-            VERIFY_ARE_EQUAL(expectedOpacity < 1.0, core->_settings.UseAcrylic());
+            auto expectedUseAcrylic = winrt::Microsoft::Terminal::Control::implementation::ControlCore::IsVintageOpacityAvailable() ? useAcrylic :
+                                                                                                                                      (expectedOpacity < 1.0 ? true : false);
+            VERIFY_ARE_EQUAL(useAcrylic, settings->UseAcrylic());
+            VERIFY_ARE_EQUAL(expectedUseAcrylic, core->UseAcrylic());
         };
         core->TransparencyChanged(opacityCallback);
 
@@ -157,7 +161,7 @@ namespace ControlUnitTests
 
             // The mouse location and buttons don't matter here.
             interactivity->MouseWheel(modifiers,
-                                      30,
+                                      -30,
                                       til::point{ 0, 0 },
                                       buttonState);
         }
@@ -378,7 +382,6 @@ namespace ControlUnitTests
         // For this test, don't use any modifiers
         const auto modifiers = ControlKeyStates();
         const Control::MouseButtonState leftMouseDown{ Control::MouseButtonState::IsLeftButtonDown };
-        const Control::MouseButtonState noMouseDown{};
 
         const til::size fontSize{ 9, 21 };
 
@@ -529,7 +532,6 @@ namespace ControlUnitTests
         // For this test, don't use any modifiers
         const auto modifiers = ControlKeyStates();
         const Control::MouseButtonState leftMouseDown{ Control::MouseButtonState::IsLeftButtonDown };
-        const Control::MouseButtonState noMouseDown{};
 
         const til::size fontSize{ 9, 21 };
 
@@ -741,7 +743,6 @@ namespace ControlUnitTests
         // For this test, don't use any modifiers
         const auto modifiers = ControlKeyStates();
         const Control::MouseButtonState leftMouseDown{ Control::MouseButtonState::IsLeftButtonDown };
-        const Control::MouseButtonState noMouseDown{};
 
         const til::size fontSize{ 9, 21 };
 

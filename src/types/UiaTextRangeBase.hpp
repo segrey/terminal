@@ -146,7 +146,7 @@ namespace Microsoft::Console::Types
 
         RECT _getTerminalRect() const;
 
-        virtual const COORD _getScreenFontSize() const;
+        virtual const COORD _getScreenFontSize() const noexcept;
 
         const unsigned int _getViewportHeight(const SMALL_RECT viewport) const noexcept;
         const Viewport _getOptimizedBufferSize() const noexcept;
@@ -182,6 +182,7 @@ namespace Microsoft::Console::Types
 
         std::optional<bool> _verifyAttr(TEXTATTRIBUTEID attributeId, VARIANT val, const TextAttribute& attr) const;
         bool _initializeAttrQuery(TEXTATTRIBUTEID attributeId, VARIANT* pRetVal, const TextAttribute& attr) const;
+        bool _tryMoveToWordStart(const TextBuffer& buffer, const til::point documentEnd, COORD& resultingPos) const;
 
         COORD _getInclusiveEnd() noexcept;
 

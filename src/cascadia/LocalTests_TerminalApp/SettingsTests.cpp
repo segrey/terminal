@@ -16,6 +16,31 @@ using namespace winrt::Microsoft::Terminal::Control;
 
 namespace TerminalAppLocalTests
 {
+    static constexpr std::wstring_view inboxSettings{ LR"({
+        "schemes": [{
+            "name": "Campbell",
+            "foreground": "#CCCCCC",
+            "background": "#0C0C0C",
+            "cursorColor": "#FFFFFF",
+            "black": "#0C0C0C",
+            "red": "#C50F1F",
+            "green": "#13A10E",
+            "yellow": "#C19C00",
+            "blue": "#0037DA",
+            "purple": "#881798",
+            "cyan": "#3A96DD",
+            "white": "#CCCCCC",
+            "brightBlack": "#767676",
+            "brightRed": "#E74856",
+            "brightGreen": "#16C60C",
+            "brightYellow": "#F9F1A5",
+            "brightBlue": "#3B78FF",
+            "brightPurple": "#B4009E",
+            "brightCyan": "#61D6D6",
+            "brightWhite": "#F2F2F2"
+        }]
+    })" };
+
     // TODO:microsoft/terminal#3838:
     // Unfortunately, these tests _WILL NOT_ work in our CI. We're waiting for
     // an updated TAEF that will let us install framework packages when the test
@@ -79,7 +104,7 @@ namespace TerminalAppLocalTests
         // containing a ${profile.name} to replace. When we expand it, it should
         // have created one command for each profile.
 
-        const std::string settingsJson{ R"(
+        static constexpr std::wstring_view settingsJson{ LR"(
         {
             "defaultProfile": "{6239a42c-0000-49a3-80bd-e8fdd045185c}",
             "profiles": [
@@ -107,14 +132,10 @@ namespace TerminalAppLocalTests
                     "iterateOn": "profiles",
                     "command": { "action": "splitPane", "profile": "${profile.name}" }
                 },
-            ],
-            "schemes": [ { "name": "Campbell" } ] // This is included here to prevent settings validation errors.
+            ]
         })" };
 
-        const auto guid0 = ::Microsoft::Console::Utils::GuidFromString(L"{6239a42c-0000-49a3-80bd-e8fdd045185c}");
-        const auto guid1 = ::Microsoft::Console::Utils::GuidFromString(L"{6239a42c-1111-49a3-80bd-e8fdd045185c}");
-
-        CascadiaSettings settings{ til::u8u16(settingsJson) };
+        CascadiaSettings settings{ settingsJson, inboxSettings };
 
         VERIFY_ARE_EQUAL(0u, settings.Warnings().Size());
 
@@ -207,7 +228,7 @@ namespace TerminalAppLocalTests
         // For this test, put an iterable command without a given `name` to
         // replace. When we expand it, it should still work.
 
-        const std::string settingsJson{ R"(
+        static constexpr std::wstring_view settingsJson{ LR"(
         {
             "defaultProfile": "{6239a42c-0000-49a3-80bd-e8fdd045185c}",
             "profiles": [
@@ -234,14 +255,10 @@ namespace TerminalAppLocalTests
                     "iterateOn": "profiles",
                     "command": { "action": "splitPane", "profile": "${profile.name}" }
                 },
-            ],
-            "schemes": [ { "name": "Campbell" } ] // This is included here to prevent settings validation errors.
+            ]
         })" };
 
-        const auto guid0 = ::Microsoft::Console::Utils::GuidFromString(L"{6239a42c-0000-49a3-80bd-e8fdd045185c}");
-        const auto guid1 = ::Microsoft::Console::Utils::GuidFromString(L"{6239a42c-1111-49a3-80bd-e8fdd045185c}");
-
-        CascadiaSettings settings{ til::u8u16(settingsJson) };
+        CascadiaSettings settings{ settingsJson, inboxSettings };
 
         VERIFY_ARE_EQUAL(0u, settings.Warnings().Size());
 
@@ -335,7 +352,7 @@ namespace TerminalAppLocalTests
         // cause bad json to be filled in. Something like a profile with a name
         // of "Foo\"", so the trailing '"' might break the json parsing.
 
-        const std::string settingsJson{ R"(
+        static constexpr std::wstring_view settingsJson{ LR"(
         {
             "defaultProfile": "{6239a42c-0000-49a3-80bd-e8fdd045185c}",
             "profiles": [
@@ -363,14 +380,10 @@ namespace TerminalAppLocalTests
                     "iterateOn": "profiles",
                     "command": { "action": "splitPane", "profile": "${profile.name}" }
                 },
-            ],
-            "schemes": [ { "name": "Campbell" } ] // This is included here to prevent settings validation errors.
+            ]
         })" };
 
-        const auto guid0 = ::Microsoft::Console::Utils::GuidFromString(L"{6239a42c-0000-49a3-80bd-e8fdd045185c}");
-        const auto guid1 = ::Microsoft::Console::Utils::GuidFromString(L"{6239a42c-1111-49a3-80bd-e8fdd045185c}");
-
-        CascadiaSettings settings{ til::u8u16(settingsJson) };
+        CascadiaSettings settings{ settingsJson, inboxSettings };
 
         VERIFY_ARE_EQUAL(0u, settings.Warnings().Size());
 
@@ -468,7 +481,7 @@ namespace TerminalAppLocalTests
         //    ├─ first.com
         //    └─ second.com
 
-        const std::string settingsJson{ R"(
+        static constexpr std::wstring_view settingsJson{ LR"(
         {
             "defaultProfile": "{6239a42c-0000-49a3-80bd-e8fdd045185c}",
             "profiles": [
@@ -504,11 +517,10 @@ namespace TerminalAppLocalTests
                         }
                     ]
                 },
-            ],
-            "schemes": [ { "name": "Campbell" } ] // This is included here to prevent settings validation errors.
+            ]
         })" };
 
-        CascadiaSettings settings{ til::u8u16(settingsJson) };
+        CascadiaSettings settings{ settingsJson, inboxSettings };
 
         VERIFY_ARE_EQUAL(0u, settings.Warnings().Size());
         VERIFY_ARE_EQUAL(3u, settings.ActiveProfiles().Size());
@@ -558,7 +570,7 @@ namespace TerminalAppLocalTests
         //       ├─ child1
         //       └─ child2
 
-        const std::string settingsJson{ R"(
+        static constexpr std::wstring_view settingsJson{ LR"(
         {
             "defaultProfile": "{6239a42c-0000-49a3-80bd-e8fdd045185c}",
             "profiles": [
@@ -599,11 +611,10 @@ namespace TerminalAppLocalTests
                         },
                     ]
                 },
-            ],
-            "schemes": [ { "name": "Campbell" } ] // This is included here to prevent settings validation errors.
+            ]
         })" };
 
-        CascadiaSettings settings{ til::u8u16(settingsJson) };
+        CascadiaSettings settings{ settingsJson, inboxSettings };
 
         VERIFY_ARE_EQUAL(0u, settings.Warnings().Size());
         VERIFY_ARE_EQUAL(3u, settings.ActiveProfiles().Size());
@@ -691,7 +702,7 @@ namespace TerminalAppLocalTests
         //     ├─ Split pane, direction: right, profile: profile2
         //     └─ Split pane, direction: down, profile: profile2
 
-        const std::string settingsJson{ R"(
+        static constexpr std::wstring_view settingsJson{ LR"(
         {
             "defaultProfile": "{6239a42c-0000-49a3-80bd-e8fdd045185c}",
             "profiles": [
@@ -723,11 +734,10 @@ namespace TerminalAppLocalTests
                         { "command": { "action": "splitPane", "profile": "${profile.name}", "split": "down" } }
                     ]
                 }
-            ],
-            "schemes": [ { "name": "Campbell" } ] // This is included here to prevent settings validation errors.
+            ]
         })" };
 
-        CascadiaSettings settings{ til::u8u16(settingsJson) };
+        CascadiaSettings settings{ settingsJson, inboxSettings };
 
         VERIFY_ARE_EQUAL(0u, settings.Warnings().Size());
         VERIFY_ARE_EQUAL(3u, settings.ActiveProfiles().Size());
@@ -828,7 +838,7 @@ namespace TerminalAppLocalTests
         //    ├─ Profile 2
         //    └─ Profile 3
 
-        const std::string settingsJson{ R"(
+        static constexpr std::wstring_view settingsJson{ LR"(
         {
             "defaultProfile": "{6239a42c-0000-49a3-80bd-e8fdd045185c}",
             "profiles": [
@@ -860,11 +870,10 @@ namespace TerminalAppLocalTests
                         }
                     ]
                 }
-            ],
-            "schemes": [ { "name": "Campbell" } ] // This is included here to prevent settings validation errors.
+            ]
         })" };
 
-        CascadiaSettings settings{ til::u8u16(settingsJson) };
+        CascadiaSettings settings{ settingsJson, inboxSettings };
 
         VERIFY_ARE_EQUAL(0u, settings.Warnings().Size());
         VERIFY_ARE_EQUAL(3u, settings.ActiveProfiles().Size());
@@ -926,7 +935,7 @@ namespace TerminalAppLocalTests
         //       ├─ Split right
         //       └─ Split down
 
-        const std::string settingsJson{ R"(
+        static constexpr std::wstring_view settingsJson{ LR"(
         {
             "defaultProfile": "{6239a42c-0000-49a3-80bd-e8fdd045185c}",
             "profiles": [
@@ -963,11 +972,10 @@ namespace TerminalAppLocalTests
                         }
                     ]
                 }
-            ],
-            "schemes": [ { "name": "Campbell" } ] // This is included here to prevent settings validation errors.
+            ]
         })" };
 
-        CascadiaSettings settings{ til::u8u16(settingsJson) };
+        CascadiaSettings settings{ settingsJson, inboxSettings };
 
         VERIFY_ARE_EQUAL(0u, settings.Warnings().Size());
         VERIFY_ARE_EQUAL(3u, settings.ActiveProfiles().Size());
@@ -1071,7 +1079,7 @@ namespace TerminalAppLocalTests
         // containing a ${profile.name} to replace. When we expand it, it should
         // have created one command for each profile.
 
-        const std::string settingsJson{ R"(
+        static constexpr std::wstring_view settingsJson{ LR"(
         {
             "defaultProfile": "{6239a42c-0000-49a3-80bd-e8fdd045185c}",
             "profiles": [
@@ -1094,9 +1102,72 @@ namespace TerminalAppLocalTests
                 }
             ],
             "schemes": [
-                { "name": "scheme_0" },
-                { "name": "scheme_1" },
-                { "name": "scheme_2" },
+                {
+                    "name": "Campbell",
+                    "foreground": "#CCCCCC",
+                    "background": "#0C0C0C",
+                    "cursorColor": "#FFFFFF",
+                    "black": "#0C0C0C",
+                    "red": "#C50F1F",
+                    "green": "#13A10E",
+                    "yellow": "#C19C00",
+                    "blue": "#0037DA",
+                    "purple": "#881798",
+                    "cyan": "#3A96DD",
+                    "white": "#CCCCCC",
+                    "brightBlack": "#767676",
+                    "brightRed": "#E74856",
+                    "brightGreen": "#16C60C",
+                    "brightYellow": "#F9F1A5",
+                    "brightBlue": "#3B78FF",
+                    "brightPurple": "#B4009E",
+                    "brightCyan": "#61D6D6",
+                    "brightWhite": "#F2F2F2"
+                },
+                {
+                    "name": "Campbell PowerShell",
+                    "foreground": "#CCCCCC",
+                    "background": "#012456",
+                    "cursorColor": "#FFFFFF",
+                    "black": "#0C0C0C",
+                    "red": "#C50F1F",
+                    "green": "#13A10E",
+                    "yellow": "#C19C00",
+                    "blue": "#0037DA",
+                    "purple": "#881798",
+                    "cyan": "#3A96DD",
+                    "white": "#CCCCCC",
+                    "brightBlack": "#767676",
+                    "brightRed": "#E74856",
+                    "brightGreen": "#16C60C",
+                    "brightYellow": "#F9F1A5",
+                    "brightBlue": "#3B78FF",
+                    "brightPurple": "#B4009E",
+                    "brightCyan": "#61D6D6",
+                    "brightWhite": "#F2F2F2"
+                },
+                {
+                    "name": "Vintage",
+                    "foreground": "#C0C0C0",
+                    "background": "#000000",
+                    "cursorColor": "#FFFFFF",
+                    "black": "#000000",
+                    "red": "#800000",
+                    "green": "#008000",
+                    "yellow": "#808000",
+                    "blue": "#000080",
+                    "purple": "#800080",
+                    "cyan": "#008080",
+                    "white": "#C0C0C0",
+                    "brightBlack": "#808080",
+                    "brightRed": "#FF0000",
+                    "brightGreen": "#00FF00",
+                    "brightYellow": "#FFFF00",
+                    "brightBlue": "#0000FF",
+                    "brightPurple": "#FF00FF",
+                    "brightCyan": "#00FFFF",
+                    "brightWhite": "#FFFFFF"
+                }
             ],
             "actions": [
                 {
@@ -1107,11 +1178,7 @@ namespace TerminalAppLocalTests
             ]
         })" };
 
-        CascadiaSettings settings{ til::u8u16(settingsJson) };
-
-        // Since at least one profile does not reference a color scheme,
-        // we add a warning saying "the color scheme is unknown"
-        VERIFY_ARE_EQUAL(1u, settings.Warnings().Size());
+        CascadiaSettings settings{ settingsJson, {} };
 
         VERIFY_ARE_EQUAL(3u, settings.ActiveProfiles().Size());
 
@@ -1139,8 +1206,6 @@ namespace TerminalAppLocalTests
         auto expandedCommands = winrt::TerminalApp::implementation::TerminalPage::_ExpandCommands(nameMap, settings.ActiveProfiles().GetView(), settings.GlobalSettings().ColorSchemes());
         _logCommandNames(expandedCommands.GetView());
 
-        // This is the same warning as above
-        VERIFY_ARE_EQUAL(1u, settings.Warnings().Size());
         VERIFY_ARE_EQUAL(3u, expandedCommands.Size());
 
         // Yes, this test is testing splitPane with profiles named after each
@@ -1148,7 +1213,7 @@ namespace TerminalAppLocalTests
         // just easy tests to write.
 
         {
-            auto command = expandedCommands.Lookup(L"iterable command scheme_0");
+            auto command = expandedCommands.Lookup(L"iterable command Campbell");
             VERIFY_IS_NOT_NULL(command);
             auto actionAndArgs = command.ActionAndArgs();
             VERIFY_IS_NOT_NULL(actionAndArgs);
@@ -1162,11 +1227,11 @@ namespace TerminalAppLocalTests
             VERIFY_IS_TRUE(realArgs.TerminalArgs().StartingDirectory().empty());
             VERIFY_IS_TRUE(realArgs.TerminalArgs().TabTitle().empty());
             VERIFY_IS_FALSE(realArgs.TerminalArgs().Profile().empty());
-            VERIFY_ARE_EQUAL(L"scheme_0", realArgs.TerminalArgs().Profile());
+            VERIFY_ARE_EQUAL(L"Campbell", realArgs.TerminalArgs().Profile());
         }
 
         {
-            auto command = expandedCommands.Lookup(L"iterable command scheme_1");
+            auto command = expandedCommands.Lookup(L"iterable command Campbell PowerShell");
             VERIFY_IS_NOT_NULL(command);
             auto actionAndArgs = command.ActionAndArgs();
             VERIFY_IS_NOT_NULL(actionAndArgs);
@@ -1180,11 +1245,11 @@ namespace TerminalAppLocalTests
             VERIFY_IS_TRUE(realArgs.TerminalArgs().StartingDirectory().empty());
             VERIFY_IS_TRUE(realArgs.TerminalArgs().TabTitle().empty());
             VERIFY_IS_FALSE(realArgs.TerminalArgs().Profile().empty());
-            VERIFY_ARE_EQUAL(L"scheme_1", realArgs.TerminalArgs().Profile());
+            VERIFY_ARE_EQUAL(L"Campbell PowerShell", realArgs.TerminalArgs().Profile());
         }
 
         {
-            auto command = expandedCommands.Lookup(L"iterable command scheme_2");
+            auto command = expandedCommands.Lookup(L"iterable command Vintage");
             VERIFY_IS_NOT_NULL(command);
             auto actionAndArgs = command.ActionAndArgs();
             VERIFY_IS_NOT_NULL(actionAndArgs);
@@ -1198,7 +1263,7 @@ namespace TerminalAppLocalTests
             VERIFY_IS_TRUE(realArgs.TerminalArgs().StartingDirectory().empty());
             VERIFY_IS_TRUE(realArgs.TerminalArgs().TabTitle().empty());
             VERIFY_IS_FALSE(realArgs.TerminalArgs().Profile().empty());
-            VERIFY_ARE_EQUAL(L"scheme_2", realArgs.TerminalArgs().Profile());
+            VERIFY_ARE_EQUAL(L"Vintage", realArgs.TerminalArgs().Profile());
         }
     }
 

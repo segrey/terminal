@@ -2,7 +2,6 @@
 // Licensed under the MIT license.
 
 #include "precomp.h"
-
 #include "renderer.hpp"
 
 #pragma hdrstop
@@ -32,7 +31,7 @@ static constexpr auto renderBackoffBaseTimeMilliseconds{ 150 };
 Renderer::Renderer(IRenderData* pData,
                    _In_reads_(cEngines) IRenderEngine** const rgpEngines,
                    const size_t cEngines,
-                   std::unique_ptr<IRenderThread> thread) :
+                   std::unique_ptr<RenderThread> thread) :
     _pData(THROW_HR_IF_NULL(E_INVALIDARG, pData)),
     _pThread{ std::move(thread) },
     _viewport{ pData->GetViewport() }
@@ -51,7 +50,7 @@ Renderer::Renderer(IRenderData* pData,
 // - <none>
 Renderer::~Renderer()
 {
-    // IRenderThread blocks until it has shut down.
+    // RenderThread blocks until it has shut down.
     _destructing = true;
     _pThread.reset();
 }
@@ -142,7 +141,7 @@ try
     });
 
     // A. Prep Colors
-    RETURN_IF_FAILED(_UpdateDrawingBrushes(pEngine, _pData->GetDefaultBrushColors(), false, true));
+    RETURN_IF_FAILED(_UpdateDrawingBrushes(pEngine, {}, false, true));
 
     // B. Perform Scroll Operations
     RETURN_IF_FAILED(_PerformScrolling(pEngine));
@@ -898,50 +897,50 @@ void Renderer::_PaintBufferOutputHelper(_In_ IRenderEngine* const pEngine,
 // Arguments:
 // - textAttribute: the TextAttribute to generate GridLines from.
 // Return Value:
-// - a GridLines containing all the gridline info from the TextAttribute
-IRenderEngine::GridLines Renderer::s_GetGridlines(const TextAttribute& textAttribute) noexcept
+// - a GridLineSet containing all the gridline info from the TextAttribute
+IRenderEngine::GridLineSet Renderer::s_GetGridlines(const TextAttribute& textAttribute) noexcept
 {
     // Convert console grid line representations into rendering engine enum representations.
-    IRenderEngine::GridLines lines = IRenderEngine::GridLines::None;
+    IRenderEngine::GridLineSet lines;
 
     if (textAttribute.IsTopHorizontalDisplayed())
     {
-        lines |= IRenderEngine::GridLines::Top;
+        lines.set(IRenderEngine::GridLines::Top);
     }
 
     if (textAttribute.IsBottomHorizontalDisplayed())
     {
-        lines |= IRenderEngine::GridLines::Bottom;
+        lines.set(IRenderEngine::GridLines::Bottom);
     }
 
     if (textAttribute.IsLeftVerticalDisplayed())
     {
-        lines |= IRenderEngine::GridLines::Left;
+        lines.set(IRenderEngine::GridLines::Left);
     }
 
     if (textAttribute.IsRightVerticalDisplayed())
     {
-        lines |= IRenderEngine::GridLines::Right;
+        lines.set(IRenderEngine::GridLines::Right);
     }
 
     if (textAttribute.IsCrossedOut())
     {
-        lines |= IRenderEngine::GridLines::Strikethrough;
+        lines.set(IRenderEngine::GridLines::Strikethrough);
     }
 
     if (textAttribute.IsUnderlined())
     {
-        lines |= IRenderEngine::GridLines::Underline;
+        lines.set(IRenderEngine::GridLines::Underline);
     }
 
     if (textAttribute.IsDoublyUnderlined())
     {
-        lines |= IRenderEngine::GridLines::DoubleUnderline;
+        lines.set(IRenderEngine::GridLines::DoubleUnderline);
     }
 
     if (textAttribute.IsHyperlink())
     {
-        lines |= IRenderEngine::GridLines::HyperlinkUnderline;
+        lines.set(IRenderEngine::GridLines::HyperlinkUnderline);
     }
     return lines;
 }
@@ -962,7 +961,7 @@ void Renderer::_PaintBufferOutputGridLineHelper(_In_ IRenderEngine* const pEngin
                                                 const COORD coordTarget)
 {
     // Convert console grid line representations into rendering engine enum representations.
-    IRenderEngine::GridLines lines = Renderer::s_GetGridlines(textAttribute);
+    auto lines = Renderer::s_GetGridlines(textAttribute);
 
     // For now, we dash underline patterns and switch to regular underline on hover
     // Since we're only rendering pattern links on *hover*, there's no point in checking
@@ -975,13 +974,13 @@ void Renderer::_PaintBufferOutputGridLineHelper(_In_ IRenderEngine* const pEngin
         {
             if (_pData->GetPatternId(coordTarget).size() > 0)
             {
-                lines |= IRenderEngine::GridLines::Underline;
+                lines.set(IRenderEngine::GridLines::Underline);
             }
         }
     }
 
     // Return early if there are no lines to paint.
-    if (lines != IRenderEngine::GridLines::None)
+    if (lines.any())
     {
         // Get the current foreground color to render the lines.
         const COLORREF rgb = _pData->GetAttributeColors(textAttribute).first;

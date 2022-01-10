@@ -24,7 +24,6 @@ Abstract:
 #include "WindowManager.g.h"
 #include "Peasant.h"
 #include "Monarch.h"
-#include "../cascadia/inc/cppwinrt_utils.h"
 
 namespace winrt::Microsoft::Terminal::Remoting::implementation
 {
@@ -50,6 +49,7 @@ namespace winrt::Microsoft::Terminal::Remoting::implementation
         winrt::fire_and_forget RequestQuitAll();
         bool DoesQuakeWindowExist();
         void UpdateActiveTabTitle(winrt::hstring title);
+        Windows::Foundation::Collections::IVector<winrt::hstring> GetAllWindowLayouts();
 
         TYPED_EVENT(FindTargetWindowRequested, winrt::Windows::Foundation::IInspectable, winrt::Microsoft::Terminal::Remoting::FindTargetWindowArgs);
         TYPED_EVENT(BecameMonarch, winrt::Windows::Foundation::IInspectable, winrt::Windows::Foundation::IInspectable);
@@ -57,7 +57,8 @@ namespace winrt::Microsoft::Terminal::Remoting::implementation
         TYPED_EVENT(WindowClosed, winrt::Windows::Foundation::IInspectable, winrt::Windows::Foundation::IInspectable);
         TYPED_EVENT(ShowNotificationIconRequested, winrt::Windows::Foundation::IInspectable, winrt::Windows::Foundation::IInspectable);
         TYPED_EVENT(HideNotificationIconRequested, winrt::Windows::Foundation::IInspectable, winrt::Windows::Foundation::IInspectable);
-        TYPED_EVENT(QuitAllRequested, winrt::Windows::Foundation::IInspectable, winrt::Windows::Foundation::IInspectable);
+        TYPED_EVENT(QuitAllRequested, winrt::Windows::Foundation::IInspectable, winrt::Microsoft::Terminal::Remoting::QuitAllRequestedArgs);
+        TYPED_EVENT(GetWindowLayoutRequested, winrt::Windows::Foundation::IInspectable, winrt::Microsoft::Terminal::Remoting::GetWindowLayoutArgs);
 
     private:
         bool _shouldCreateWindow{ false };
