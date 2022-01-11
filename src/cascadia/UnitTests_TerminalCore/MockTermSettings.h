@@ -44,6 +44,7 @@ namespace TerminalCoreUnitTests
         winrt::Windows::Foundation::IReference<winrt::Microsoft::Terminal::Core::Color> StartingTabColor() { return nullptr; }
         bool TrimBlockSelection() { return false; }
         bool DetectURLs() { return true; }
+        bool VtPassthrough() { return false; }
 
         // other implemented methods
         til::color GetColorTableEntry(int32_t) const { return 123; }
@@ -71,6 +72,7 @@ namespace TerminalCoreUnitTests
         void StartingTabColor(const IInspectable&) {}
         void TrimBlockSelection(bool) {}
         void DetectURLs(bool) {}
+        void VtPassthrough(bool) {}
 
         WINRT_PROPERTY(bool, IntenseIsBright, true);
         WINRT_PROPERTY(bool, AdjustIndistinguishableColors, true);

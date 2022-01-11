@@ -42,7 +42,8 @@
     X(winrt::Windows::Foundation::IReference<winrt::Microsoft::Terminal::Core::Color>, TabColor, nullptr)         \
     X(winrt::Windows::Foundation::IReference<winrt::Microsoft::Terminal::Core::Color>, StartingTabColor, nullptr) \
     X(bool, TrimBlockSelection, false)                                                                            \
-    X(bool, DetectURLs, true)
+    X(bool, DetectURLs, true)                                                                                     \
+    X(bool, VtPassthrough, false)
 
 // --------------------------- Control Settings ---------------------------
 //  All of these settings are defined in IControlSettings.

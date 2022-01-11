@@ -44,6 +44,7 @@ namespace ControlUnitTests
 
         WINRT_PROPERTY(bool, TrimBlockSelection, false);
         WINRT_PROPERTY(bool, DetectURLs, true);
+        WINRT_PROPERTY(bool, VtPassthrough, false);
         WINRT_PROPERTY(bool, IntenseIsBright, true);
         WINRT_PROPERTY(bool, AdjustIndistinguishableColors, true);
         // ------------------------ End of Core Settings -----------------------
