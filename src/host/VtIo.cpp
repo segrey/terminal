@@ -165,14 +165,7 @@ VtIo::VtIo() :
                 {
                     auto vtapi = new VtApiRoutines();
                     vtapi->m_pVtEngine = xterm256Engine.get();
-                    if (globals.api)
-                    {
-                        vtapi->m_pUsualRoutines = globals.api;
-                    }
-                    else
-                    {
-                        vtapi->m_pUsualRoutines = new ApiRoutines();
-                    }
+                    vtapi->m_pUsualRoutines = globals.api;
 
                     xterm256Engine->SetPassthroughMode(true);
 
