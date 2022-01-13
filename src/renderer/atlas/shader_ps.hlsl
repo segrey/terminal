@@ -53,11 +53,7 @@ Texture2D<float4> glyphs : register(t1);
 
 float4 decodeRGBA(uint i)
 {
-    uint r = i & 0xff;
-    uint g = (i >> 8) & 0xff;
-    uint b = (i >> 16) & 0xff;
-    uint a = i >> 24;
-    float4 c = float4(r, g, b, a) / 255.0f;
+    float4 c = (i >> uint4(0, 8, 16, 24) & 0xff) / 255.0f;
     // Convert to premultiplied alpha for simpler alpha blending.
     c.rgb *= c.a;
     return c;
@@ -70,20 +66,23 @@ uint2 decodeU16x2(uint i)
 
 float4 alphaBlendPremultiplied(float4 bottom, float4 top)
 {
-    float ia = 1 - top.a;
-    return float4(bottom.rgb * ia + top.rgb, bottom.a * ia + top.a);
+    bottom *= 1 - top.a;
+    return bottom + top;
 }
 
 float applyLightOnDarkContrastAdjustment(float3 color)
 {
-    float lightness = 0.30f * color.r + 0.59f * color.g + 0.11f * color.b;
-    float multiplier = saturate(4.0f * (0.75f - lightness));
-    return grayscaleEnhancedContrast * multiplier;
+    // The following 1 line is the same as this direct translation of the
+    // original code, but simplified to reduce the number of instructions:
+    //   float lightness = dot(color, float3(0.30f, 0.59f, 0.11f);
+    //   float multiplier = saturate(4.0f * (0.75f - lightness));
+    //   return grayscaleEnhancedContrast * multiplier;
+    return grayscaleEnhancedContrast * saturate(dot(color, float3(0.30f, 0.59f, 0.11f) * -4.0f) + 3.0f);
 }
 
 float calcColorIntensity(float3 color)
 {
-    return (color.r + color.g + color.g + color.b) / 4.0f;
+    return dot(color, float3(0.25f, 0.5f, 0.25f));
 }
 
 float enhanceContrast(float alpha, float k)
@@ -148,8 +147,7 @@ float4 main(float4 pos: SV_Position): SV_Target
 
         if (!(cell.flags & CellFlags_ColoredGlyph))
         {
-            float contrastBoost = (cell.flags & CellFlags_ThinFont) == 0 ? 0.0f : 0.5f;
-            float enhancedContrast = contrastBoost + applyLightOnDarkContrastAdjustment(fg.rgb);
+            float enhancedContrast = applyLightOnDarkContrastAdjustment(fg.rgb);
             float intensity = calcColorIntensity(fg.rgb);
             float contrasted = enhanceContrast(glyph.a, enhancedContrast);
             float correctedAlpha = applyAlphaCorrection(contrasted, intensity, gammaRatios);
@@ -176,6 +174,11 @@ float4 main(float4 pos: SV_Position): SV_Target
     if (cell.flags & CellFlags_Selected)
     {
         color = alphaBlendPremultiplied(color, decodeRGBA(selectionColor));
+    }
+
+    if (true && uint(round(sin(pos.x)*2+1)) == cellPos.y)
+    {
+        color = alphaBlendPremultiplied(color, fg);
     }
 
     return color;

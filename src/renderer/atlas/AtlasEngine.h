@@ -631,7 +631,7 @@ namespace Microsoft::Console::Render
 
         static constexpr bool debugGlyphGenerationPerformance = false;
         static constexpr bool debugGeneralPerformance = false || debugGlyphGenerationPerformance;
-        static constexpr bool continuousRedraw = false || debugGeneralPerformance;
+        static constexpr bool continuousRedraw = true || debugGeneralPerformance;
 
         static constexpr u16 u16min = 0x0000;
         static constexpr u16 u16max = 0xffff;
