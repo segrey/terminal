@@ -4,10 +4,26 @@
 #pragma once
 
 #include "MainPage.g.h"
+#include "Breadcrumb.g.h"
 #include "Utils.h"
 
 namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
 {
+    struct Breadcrumb : BreadcrumbT<Breadcrumb>
+    {
+        Breadcrumb(IInspectable tag, winrt::hstring label) :
+            _Tag{ tag },
+            _Label{ label } {}
+
+        winrt::hstring ToString()
+        {
+            return _Label;
+        }
+
+        WINRT_PROPERTY(IInspectable, Tag);
+        WINRT_PROPERTY(winrt::hstring, Label);
+    };
+
     struct MainPage : MainPageT<MainPage>
     {
         MainPage() = delete;
@@ -28,12 +44,12 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
         uint64_t GetHostingWindow() const noexcept;
 
         bool ShowBaseLayerMenuItem() const noexcept;
-        Windows::Foundation::Collections::IObservableVector<winrt::hstring> Breadcrumbs() noexcept;
+        Windows::Foundation::Collections::IObservableVector<IInspectable> Breadcrumbs() noexcept;
 
         TYPED_EVENT(OpenJson, Windows::Foundation::IInspectable, Model::SettingsTarget);
 
     private:
-        Windows::Foundation::Collections::IObservableVector<winrt::hstring> _breadcrumbs;
+        Windows::Foundation::Collections::IObservableVector<IInspectable> _breadcrumbs;
         Model::CascadiaSettings _settingsSource;
         Model::CascadiaSettings _settingsClone;
 
