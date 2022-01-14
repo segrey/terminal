@@ -24,6 +24,7 @@ namespace MiniTerm
             {
                 var terminal = new Terminal();
                 terminal.Run("cmd.exe");
+                // terminal.Run("node.exe dump-stdin.js"); // set working directory to "samples\ConPTY\MiniTerm\MiniTerm" to make it working
             }
             catch (InvalidOperationException e)
             {

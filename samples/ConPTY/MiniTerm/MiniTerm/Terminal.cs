@@ -77,9 +77,23 @@ namespace MiniTerm
 
                 while (true)
                 {
-                    // send input character-by-character to the pipe
-                    char key = Console.ReadKey(intercept: true).KeyChar;
-                    writer.Write(key);
+                    ConsoleKeyInfo info = Console.ReadKey(intercept: true);
+                    if (info.Modifiers == ConsoleModifiers.Control && info.Key == ConsoleKey.LeftArrow)
+                    {
+                        writer.Write("\x001b[5D");
+                        // writer.Write("\x001b[1;5D"); // works
+                    }
+                    else
+                    if (info.Modifiers == ConsoleModifiers.Control && info.Key == ConsoleKey.RightArrow)
+                    {
+                        writer.Write("\x001b[5C");
+                        // writer.Write("\x001b[1;5C"); // works
+                    }
+                    else
+                    {
+                        // send input character-by-character to the pipe
+                        writer.Write(info.KeyChar);
+                    }
                 }
             }
         }
