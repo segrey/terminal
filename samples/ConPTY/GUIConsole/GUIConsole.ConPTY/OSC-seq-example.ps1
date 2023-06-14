@@ -1,0 +1,11 @@
+﻿[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::Write("1")
+[Console]::Write("$([char]0x1B)]42;$("a" * 5)`a")
+[Console]::Write("2")
+[Console]::Write("$([char]0x1B)]42;$("b" * 250)`a")
+[Console]::Write("3")
+[Console]::Write("$([char]0x1B)]42;$("c" * 251)`a")
+[Console]::Write("4")
+[Console]::Write("$([char]0x1B)]42;$("d" * 252)`a")
+[Console]::Write("5")
+[Console]::Write("$([char]0x1B)]42;$("e" * 253)`a")
