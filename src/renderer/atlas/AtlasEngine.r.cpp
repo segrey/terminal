@@ -217,7 +217,7 @@ void AtlasEngine::_recreateBackend()
     if (hr == DXGI_ERROR_SDK_COMPONENT_MISSING)
     {
         // This might happen if you don't have "Graphics debugger and GPU
-        // profiler for DirectX" installed in VS. We shouln't just explode if
+        // profiler for DirectX" installed in VS. We shouldn't just explode if
         // you don't though - instead, disable debugging and try again.
         WI_ClearFlag(deviceFlags, D3D11_CREATE_DEVICE_DEBUG);
 
@@ -329,7 +329,7 @@ void AtlasEngine::_createSwapChain()
         .SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
         // If our background is opaque we can enable "independent" flips by setting DXGI_ALPHA_MODE_IGNORE.
         // As our swap chain won't have to compose with DWM anymore it reduces the display latency dramatically.
-        .AlphaMode = _p.s->target->enableTransparentBackground ? DXGI_ALPHA_MODE_PREMULTIPLIED : DXGI_ALPHA_MODE_IGNORE,
+        .AlphaMode = _p.s->target->useAlpha ? DXGI_ALPHA_MODE_PREMULTIPLIED : DXGI_ALPHA_MODE_IGNORE,
         .Flags = swapChainFlags,
     };
 
@@ -359,6 +359,8 @@ void AtlasEngine::_createSwapChain()
     _p.swapChain.targetGeneration = _p.s->target.generation();
     _p.swapChain.targetSize = _p.s->targetSize;
     _p.swapChain.waitForPresentation = true;
+
+    LOG_IF_FAILED(_p.swapChain.swapChain->SetMaximumFrameLatency(1));
 
     WaitUntilCanRender();
 
@@ -463,7 +465,10 @@ void AtlasEngine::_present()
             {
                 const auto offsetInPx = _p.scrollOffset * _p.s->font->cellSize.y;
                 const auto width = _p.s->targetSize.x;
-                const auto height = _p.s->cellCount.y * _p.s->font->cellSize.y;
+                // We don't use targetSize.y here, because "height" refers to the bottom coordinate of the last text row
+                // in the buffer. We then add the "offsetInPx" (which is negative when scrolling text upwards) and thus
+                // end up with a "bottom" value that is the bottom of the last row of text that we haven't invalidated.
+                const auto height = _p.s->viewportCellCount.y * _p.s->font->cellSize.y;
                 const auto top = std::max(0, offsetInPx);
                 const auto bottom = height + std::min(0, offsetInPx);
 

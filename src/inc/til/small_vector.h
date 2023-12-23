@@ -278,6 +278,12 @@ namespace til
             return tmp;
         }
 
+        [[nodiscard]] friend constexpr small_vector_iterator operator+(const difference_type off, small_vector_iterator next) noexcept
+        {
+            next += off;
+            return next;
+        }
+
         constexpr small_vector_iterator& operator-=(const difference_type off) noexcept
         {
             base::operator-=(off);
@@ -604,6 +610,24 @@ namespace til
 
             _data = data;
             _capacity = capacity;
+        }
+
+        // This is a very unsafe shortcut to free the buffer and get a direct
+        // hold to the _buffer. The caller can then fill it with `size` items.
+        [[nodiscard]] T* unsafe_shrink_to_size(size_t size) noexcept
+        {
+            assert(size <= N);
+
+            if (_capacity != N)
+            {
+                _deallocate(_data);
+            }
+
+            _data = &_buffer[0];
+            _capacity = N;
+            _size = size;
+
+            return &_buffer[0];
         }
 
         void push_back(const T& value)

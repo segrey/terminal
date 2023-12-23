@@ -29,6 +29,8 @@ namespace Microsoft::Console::VirtualTerminal
 
         OutputStateMachineEngine(std::unique_ptr<ITermDispatch> pDispatch);
 
+        bool EncounteredWin32InputModeSequence() const noexcept override;
+
         bool ActionExecute(const wchar_t wch) override;
         bool ActionExecuteFromEscape(const wchar_t wch) override;
 
@@ -214,6 +216,7 @@ namespace Microsoft::Console::VirtualTerminal
             ResetBackgroundColor = 111, // Not implemented
             ResetCursorColor = 112,
             FinalTermAction = 133,
+            VsCodeAction = 633,
             ITerm2Action = 1337,
         };
 
@@ -235,6 +238,8 @@ namespace Microsoft::Console::VirtualTerminal
         bool _ParseHyperlink(const std::wstring_view string,
                              std::wstring& params,
                              std::wstring& uri) const;
+
+        bool _CanSeqAcceptSubParam(const VTID id, const VTParameters& parameters) noexcept;
 
         void _ClearLastChar() noexcept;
     };

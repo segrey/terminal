@@ -64,6 +64,40 @@ std::vector<til::inclusive_rect> Terminal::_GetSelectionRects() const noexcept
 }
 
 // Method Description:
+// - Helper to determine the selected region of the buffer. Used for rendering.
+// Return Value:
+// - A vector of rectangles representing the regions to select, line by line. They are absolute coordinates relative to the buffer origin.
+std::vector<til::inclusive_rect> Terminal::_GetSearchSelectionRects(Microsoft::Console::Types::Viewport viewport) const noexcept
+{
+    std::vector<til::inclusive_rect> result;
+    try
+    {
+        auto lowerIt = std::lower_bound(_searchSelections.begin(), _searchSelections.end(), viewport.Top(), [](const til::inclusive_rect& rect, til::CoordType value) {
+            return rect.top < value;
+        });
+
+        auto upperIt = std::upper_bound(_searchSelections.begin(), _searchSelections.end(), viewport.BottomExclusive(), [](til::CoordType value, const til::inclusive_rect& rect) {
+            return value < rect.top;
+        });
+
+        for (auto selection = lowerIt; selection != upperIt; ++selection)
+        {
+            const auto start = til::point{ selection->left, selection->top };
+            const auto end = til::point{ selection->right, selection->top };
+            const auto adj = _activeBuffer().GetTextRects(start, end, _blockSelection, false);
+            for (auto a : adj)
+            {
+                result.emplace_back(a);
+            }
+        }
+
+        return result;
+    }
+    CATCH_LOG();
+    return result;
+}
+
+// Method Description:
 // - Identical to GetTextRects if it's a block selection, else returns a single span for the whole selection.
 // Return Value:
 // - A vector of one or more spans representing the selection. They are absolute coordinates relative to the buffer origin.
@@ -92,6 +126,7 @@ std::vector<til::point_span> Terminal::_GetSelectionSpans() const noexcept
 // - None
 const til::point Terminal::GetSelectionAnchor() const noexcept
 {
+    _assertLocked();
     return _selection->start;
 }
 
@@ -103,6 +138,7 @@ const til::point Terminal::GetSelectionAnchor() const noexcept
 // - None
 const til::point Terminal::GetSelectionEnd() const noexcept
 {
+    _assertLocked();
     return _selection->end;
 }
 
@@ -155,11 +191,13 @@ const Terminal::SelectionEndpoint Terminal::SelectionEndpointTarget() const noex
 // - bool representing if selection is active. Used to decide copy/paste on right click
 const bool Terminal::IsSelectionActive() const noexcept
 {
+    _assertLocked();
     return _selection.has_value();
 }
 
 const bool Terminal::IsBlockSelection() const noexcept
 {
+    _assertLocked();
     return _blockSelection;
 }
 
@@ -188,6 +226,8 @@ void Terminal::MultiClickSelection(const til::point viewportPos, SelectionExpans
 // - position: the (x,y) coordinate on the visible viewport
 void Terminal::SetSelectionAnchor(const til::point viewportPos)
 {
+    _assertLocked();
+
     _selection = SelectionAnchors{};
     _selection->pivot = _ConvertToBufferCell(viewportPos);
 
@@ -205,7 +245,7 @@ void Terminal::SetSelectionAnchor(const til::point viewportPos)
 // - newExpansionMode: overwrites the _multiClickSelectionMode for this function call. Used for ShiftClick
 void Terminal::SetSelectionEnd(const til::point viewportPos, std::optional<SelectionExpansion> newExpansionMode)
 {
-    if (!_selection.has_value())
+    if (!IsSelectionActive())
     {
         // capture a log for spurious endpoint sets without an active selection
         LOG_HR(E_ILLEGAL_STATE_CHANGE);
@@ -495,7 +535,7 @@ void Terminal::SelectHyperlink(const SearchDirection dir)
         const til::point bufferEnd{ bufferSize.RightInclusive(), ViewEndIndex() };
         while (!result && bufferSize.IsInBounds(searchStart) && bufferSize.IsInBounds(searchEnd) && searchStart <= searchEnd && bufferStart <= searchStart && searchEnd <= bufferEnd)
         {
-            auto patterns = _activeBuffer().GetPatterns(searchStart.y, searchEnd.y);
+            auto patterns = _getPatterns(searchStart.y, searchEnd.y);
             resultList = patterns.findContained(convertToSearchArea(searchStart), convertToSearchArea(searchEnd));
             result = extractResultFromList(resultList);
             if (!result)
@@ -817,6 +857,8 @@ void Terminal::_MoveByBuffer(SelectionDirection direction, til::point& pos) noex
 #pragma warning(disable : 26440) // changing this to noexcept would require a change to ConHost's selection model
 void Terminal::ClearSelection()
 {
+    _assertLocked();
+    _searchSelections.clear();
     _selection = std::nullopt;
     _selectionMode = SelectionInteractionMode::None;
     _selectionIsTargetingUrl = false;
@@ -832,8 +874,6 @@ void Terminal::ClearSelection()
 // - wstring text from buffer. If extended to multiple lines, each line is separated by \r\n
 const TextBuffer::TextAndColor Terminal::RetrieveSelectedTextFromBuffer(bool singleLine)
 {
-    auto lock = LockForReading();
-
     const auto selectionRects = _GetSelectionRects();
 
     const auto GetAttributeColors = [&](const auto& attr) {
@@ -886,17 +926,4 @@ void Terminal::_ScrollToPoint(const til::point pos)
         _NotifyScrollEvent();
         _activeBuffer().TriggerScroll();
     }
-}
-
-// Method Description:
-// - apply the TextAttribute "attr" to the active buffer
-// Arguments:
-// - coordStart - where to begin applying attr
-// - coordEnd - where to end applying attr (inclusive)
-// - attr - the text attributes to apply
-void Terminal::ColorSelection(const til::point coordStart, const til::point coordEnd, const TextAttribute attr)
-{
-    const auto spanLength = _activeBuffer().SpanLength(coordStart, coordEnd);
-
-    _activeBuffer().Write(OutputCellIterator(attr, spanLength), coordStart);
 }

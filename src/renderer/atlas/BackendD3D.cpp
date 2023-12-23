@@ -90,7 +90,8 @@ BackendD3D::BackendD3D(const RenderingPayload& p)
     {
         static constexpr D3D11_INPUT_ELEMENT_DESC layout[]{
             { "SV_Position", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-            { "shadingType", 0, DXGI_FORMAT_R32_UINT, 1, offsetof(QuadInstance, shadingType), D3D11_INPUT_PER_INSTANCE_DATA, 1 },
+            { "shadingType", 0, DXGI_FORMAT_R16_UINT, 1, offsetof(QuadInstance, shadingType), D3D11_INPUT_PER_INSTANCE_DATA, 1 },
+            { "renditionScale", 0, DXGI_FORMAT_R8G8_UINT, 1, offsetof(QuadInstance, renditionScale), D3D11_INPUT_PER_INSTANCE_DATA, 1 },
             { "position", 0, DXGI_FORMAT_R16G16_SINT, 1, offsetof(QuadInstance, position), D3D11_INPUT_PER_INSTANCE_DATA, 1 },
             { "size", 0, DXGI_FORMAT_R16G16_UINT, 1, offsetof(QuadInstance, size), D3D11_INPUT_PER_INSTANCE_DATA, 1 },
             { "texcoord", 0, DXGI_FORMAT_R16G16_UINT, 1, offsetof(QuadInstance, texcoord), D3D11_INPUT_PER_INSTANCE_DATA, 1 },
@@ -269,7 +270,7 @@ void BackendD3D::_handleSettingsUpdate(const RenderingPayload& p)
 
     const auto fontChanged = _fontGeneration != p.s->font.generation();
     const auto miscChanged = _miscGeneration != p.s->misc.generation();
-    const auto cellCountChanged = _cellCount != p.s->cellCount;
+    const auto cellCountChanged = _viewportCellCount != p.s->viewportCellCount;
 
     if (fontChanged)
     {
@@ -298,12 +299,41 @@ void BackendD3D::_handleSettingsUpdate(const RenderingPayload& p)
     _fontGeneration = p.s->font.generation();
     _miscGeneration = p.s->misc.generation();
     _targetSize = p.s->targetSize;
-    _cellCount = p.s->cellCount;
+    _viewportCellCount = p.s->viewportCellCount;
 }
 
 void BackendD3D::_updateFontDependents(const RenderingPayload& p)
 {
     const auto& font = *p.s->font;
+
+    // Curlyline is drawn with a desired height relative to the font size. The
+    // baseline of curlyline is at the middle of singly underline. When there's
+    // limited space to draw a curlyline, we apply a limit on the peak height.
+    {
+        // initialize curlyline peak height to a desired value. Clamp it to at
+        // least 1.
+        constexpr auto curlyLinePeakHeightEm = 0.075f;
+        _curlyLinePeakHeight = std::max(1.0f, std::roundf(curlyLinePeakHeightEm * font.fontSize));
+
+        // calc the limit we need to apply
+        const auto strokeHalfWidth = std::floor(font.underline.height / 2.0f);
+        const auto underlineMidY = font.underline.position + strokeHalfWidth;
+        const auto maxDrawableCurlyLinePeakHeight = font.cellSize.y - underlineMidY - font.underline.height;
+
+        // if the limit is <= 0 (no height at all), stick with the desired height.
+        // This is how we force a curlyline even when there's no space, though it
+        // might be clipped at the bottom.
+        if (maxDrawableCurlyLinePeakHeight > 0.0f)
+        {
+            _curlyLinePeakHeight = std::min(_curlyLinePeakHeight, maxDrawableCurlyLinePeakHeight);
+        }
+
+        const auto curlyUnderlinePos = underlineMidY - _curlyLinePeakHeight - font.underline.height;
+        const auto curlyUnderlineWidth = 2.0f * (_curlyLinePeakHeight + font.underline.height);
+        const auto curlyUnderlinePosU16 = gsl::narrow_cast<u16>(lrintf(curlyUnderlinePos));
+        const auto curlyUnderlineWidthU16 = gsl::narrow_cast<u16>(lrintf(curlyUnderlineWidth));
+        _curlyUnderline = { curlyUnderlinePosU16, curlyUnderlineWidthU16 };
+    }
 
     DWrite_GetRenderParams(p.dwriteFactory.get(), &_gamma, &_cleartypeEnhancedContrast, &_grayscaleEnhancedContrast, _textRenderingParams.put());
     // Clearing the atlas requires BeginDraw(), which is expensive. Defer this until we need Direct2D anyways.
@@ -403,29 +433,35 @@ void BackendD3D::_recreateCustomShader(const RenderingPayload& p)
             /* ppCode      */ blob.addressof(),
             /* ppErrorMsgs */ error.addressof());
 
-        // Unless we can determine otherwise, assume this shader requires evaluation every frame
-        _requiresContinuousRedraw = true;
-
         if (SUCCEEDED(hr))
         {
-            THROW_IF_FAILED(p.device->CreatePixelShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, _customPixelShader.put()));
+            THROW_IF_FAILED(p.device->CreatePixelShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, _customPixelShader.addressof()));
 
             // Try to determine whether the shader uses the Time variable
             wil::com_ptr<ID3D11ShaderReflection> reflector;
-            if (SUCCEEDED_LOG(D3DReflect(blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(reflector.put()))))
+            if (SUCCEEDED_LOG(D3DReflect(blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(reflector.addressof()))))
             {
+                // Depending on the version of the d3dcompiler_*.dll, the next two functions either return nullptr
+                // on failure or an instance of CInvalidSRConstantBuffer or CInvalidSRVariable respectively,
+                // which cause GetDesc() to return E_FAIL. In other words, we have to assume that any failure in the
+                // next few lines indicates that the cbuffer is entirely unused (--> _requiresContinuousRedraw=false).
                 if (ID3D11ShaderReflectionConstantBuffer* constantBufferReflector = reflector->GetConstantBufferByIndex(0)) // shader buffer
                 {
                     if (ID3D11ShaderReflectionVariable* variableReflector = constantBufferReflector->GetVariableByIndex(0)) // time
                     {
                         D3D11_SHADER_VARIABLE_DESC variableDescriptor;
-                        if (SUCCEEDED_LOG(variableReflector->GetDesc(&variableDescriptor)))
+                        if (SUCCEEDED(variableReflector->GetDesc(&variableDescriptor)))
                         {
                             // only if time is used
                             _requiresContinuousRedraw = WI_IsFlagSet(variableDescriptor.uFlags, D3D_SVF_USED);
                         }
                     }
                 }
+            }
+            else
+            {
+                // Unless we can determine otherwise, assume this shader requires evaluation every frame
+                _requiresContinuousRedraw = true;
             }
         }
         else
@@ -447,8 +483,6 @@ void BackendD3D::_recreateCustomShader(const RenderingPayload& p)
     else if (p.s->misc->useRetroTerminalEffect)
     {
         THROW_IF_FAILED(p.device->CreatePixelShader(&custom_shader_ps[0], sizeof(custom_shader_ps), nullptr, _customPixelShader.put()));
-        // We know the built-in retro shader doesn't require continuous redraw.
-        _requiresContinuousRedraw = false;
     }
 
     if (_customPixelShader)
@@ -509,8 +543,8 @@ void BackendD3D::_recreateBackgroundColorBitmap(const RenderingPayload& p)
     _backgroundBitmapView.reset();
 
     const D3D11_TEXTURE2D_DESC desc{
-        .Width = p.s->cellCount.x,
-        .Height = p.s->cellCount.y,
+        .Width = p.s->viewportCellCount.x,
+        .Height = p.s->viewportCellCount.y,
         .MipLevels = 1,
         .ArraySize = 1,
         .Format = DXGI_FORMAT_R8G8B8A8_UNORM,
@@ -534,11 +568,14 @@ void BackendD3D::_recreateConstBuffer(const RenderingPayload& p) const
     {
         PSConstBuffer data{};
         data.backgroundColor = colorFromU32Premultiply<f32x4>(p.s->misc->backgroundColor);
-        data.cellSize = { static_cast<f32>(p.s->font->cellSize.x), static_cast<f32>(p.s->font->cellSize.y) };
-        data.cellCount = { static_cast<f32>(p.s->cellCount.x), static_cast<f32>(p.s->cellCount.y) };
+        data.backgroundCellSize = { static_cast<f32>(p.s->font->cellSize.x), static_cast<f32>(p.s->font->cellSize.y) };
+        data.backgroundCellCount = { static_cast<f32>(p.s->viewportCellCount.x), static_cast<f32>(p.s->viewportCellCount.y) };
         DWrite_GetGammaRatios(_gamma, data.gammaRatios);
         data.enhancedContrast = p.s->font->antialiasingMode == AntialiasingMode::ClearType ? _cleartypeEnhancedContrast : _grayscaleEnhancedContrast;
         data.underlineWidth = p.s->font->underline.height;
+        data.curlyLineWaveFreq = 2.0f * 3.14f / p.s->font->cellSize.x;
+        data.curlyLinePeakHeight = _curlyLinePeakHeight;
+        data.curlyLineCellOffset = p.s->font->underline.position + p.s->font->underline.height / 2.0f;
         p.deviceContext->UpdateSubresource(_psConstantBuffer.get(), 0, nullptr, &data, 0, 0);
     }
 }
@@ -693,7 +730,6 @@ void BackendD3D::_resetGlyphAtlas(const RenderingPayload& p)
 
     const auto minAreaByFont = cellArea * 95; // Covers all printable ASCII characters
     const auto minAreaByGrowth = static_cast<u32>(_rectPacker.width) * _rectPacker.height * 2;
-    const auto min = std::max(minArea, std::max(minAreaByFont, minAreaByGrowth));
 
     // It's hard to say what the max. size of the cache should be. Optimally I think we should use as much
     // memory as is available, but the rendering code in this project is a big mess and so integrating
@@ -702,7 +738,9 @@ void BackendD3D::_resetGlyphAtlas(const RenderingPayload& p)
     // we're locked into a state, where on every render pass we're starting with a half full atlas, drawing once,
     // filling it with the remaining half and drawing again, requiring two rendering passes on each frame.
     const auto maxAreaByFont = targetArea + targetArea / 4;
-    const auto area = std::min(maxArea, std::min(maxAreaByFont, min));
+
+    auto area = std::min(maxAreaByFont, std::max(minAreaByFont, minAreaByGrowth));
+    area = clamp(area, minArea, maxArea);
 
     // This block of code calculates the size of a power-of-2 texture that has an area larger than the given `area`.
     // For instance, for an area of 985x1946 = 1916810 it would result in a u/v of 2048x1024 (area = 2097152).
@@ -890,7 +928,7 @@ void BackendD3D::_flushQuads(const RenderingPayload& p)
 void BackendD3D::_recreateInstanceBuffers(const RenderingPayload& p)
 {
     // We use the viewport size of the terminal as the initial estimate for the amount of instances we'll see.
-    const auto minCapacity = static_cast<size_t>(p.s->cellCount.x) * p.s->cellCount.y;
+    const auto minCapacity = static_cast<size_t>(p.s->viewportCellCount.x) * p.s->viewportCellCount.y;
     auto newCapacity = std::max(_instancesCount, minCapacity);
     auto newSize = newCapacity * sizeof(QuadInstance);
     // Round up to multiples of 64kB to avoid reallocating too often.
@@ -1019,7 +1057,7 @@ void BackendD3D::_drawText(RenderingPayload& p)
                     goto drawGlyphRetry;
                 }
 
-                if (glyphEntry.data.GetShadingType() != ShadingType::Default)
+                if (glyphEntry.data.shadingType != ShadingType::Default)
                 {
                     auto l = static_cast<til::CoordType>(lrintf((baselineX + row->glyphOffsets[x].advanceOffset) * scaleX));
                     auto t = static_cast<til::CoordType>(lrintf((baselineY - row->glyphOffsets[x].ascenderOffset) * scaleY));
@@ -1031,7 +1069,7 @@ void BackendD3D::_drawText(RenderingPayload& p)
                     row->dirtyBottom = std::max(row->dirtyBottom, t + glyphEntry.data.size.y);
 
                     _appendQuad() = {
-                        .shadingType = glyphEntry.data.GetShadingType(),
+                        .shadingType = glyphEntry.data.shadingType,
                         .position = { static_cast<i16>(l), static_cast<i16>(t) },
                         .size = glyphEntry.data.size,
                         .texcoord = glyphEntry.data.texcoord,
@@ -1085,11 +1123,15 @@ void BackendD3D::_drawText(RenderingPayload& p)
 //   < ! - -
 void BackendD3D::_drawTextOverlapSplit(const RenderingPayload& p, u16 y)
 {
-    const auto& originalQuad = _getLastQuad();
+    auto& originalQuad = _getLastQuad();
 
+    // If the current row has a non-default line rendition then every glyph is scaled up by 2x horizontally.
+    // This requires us to make some changes: For instance, if the ligature occupies columns 3, 4 and 5 (0-indexed)
+    // then we need to get the foreground colors from columns 2 and 4, because columns 0,1 2,3 4,5 6,7 and so on form pairs.
+    // A wide glyph would be a total of 4 actual columns wide! In other words, we need to properly round our clip rects and columns.
     i32 columnAdvance = 1;
-    i32 columnAdvanceInPx{ p.s->font->cellSize.x };
-    i32 cellCount{ p.s->cellCount.x };
+    i32 columnAdvanceInPx = p.s->font->cellSize.x;
+    i32 cellCount = p.s->viewportCellCount.x;
 
     if (p.rows[y]->lineRendition != LineRendition::SingleWidth)
     {
@@ -1103,12 +1145,27 @@ void BackendD3D::_drawTextOverlapSplit(const RenderingPayload& p, u16 y)
     originalLeft = std::max(originalLeft, 0);
     originalRight = std::min(originalRight, cellCount * columnAdvanceInPx);
 
-    auto column = originalLeft / columnAdvanceInPx + 1;
+    if (originalLeft >= originalRight)
+    {
+        return;
+    }
+
+    const auto colors = &p.foregroundBitmap[p.colorBitmapRowStride * y];
+
+    // As explained in the beginning, column and clipLeft should be in multiples of columnAdvance
+    // and columnAdvanceInPx respectively, because that's how line renditions work.
+    auto column = originalLeft / columnAdvanceInPx;
     auto clipLeft = column * columnAdvanceInPx;
     column *= columnAdvance;
 
-    const auto colors = &p.foregroundBitmap[p.colorBitmapRowStride * y];
-    auto lastFg = originalQuad.color;
+    // Our loop below will split the ligature by processing it from left to right.
+    // Some fonts however implement ligatures by replacing a string like "&&" with a whitespace padding glyph,
+    // followed by the actual "&&" glyph which has a 1 column advance width. In that case the originalQuad
+    // will have the .color of the 2nd column and not of the 1st one. We need to fix that here.
+    auto lastFg = colors[column];
+    originalQuad.color = lastFg;
+    column += columnAdvance;
+    clipLeft += columnAdvanceInPx;
 
     // We must ensure to exit the loop while `column` is less than `cellCount.x`,
     // otherwise we cause a potential out of bounds access into foregroundBitmap.
@@ -1185,6 +1242,29 @@ bool BackendD3D::_drawGlyph(const RenderingPayload& p, const AtlasFontFaceEntryI
         .glyphCount = 1,
         .glyphIndices = &glyphEntry.glyphIndex,
     };
+
+    // To debug issues with this function it may be helpful to know which file
+    // a given font face corresponds to. This code works for most cases.
+#if 0
+    wchar_t filePath[MAX_PATH]{};
+    {
+        UINT32 fileCount = 1;
+        wil::com_ptr<IDWriteFontFile> file;
+        if (SUCCEEDED(fontFaceEntry.fontFace->GetFiles(&fileCount, file.addressof())))
+        {
+            wil::com_ptr<IDWriteFontFileLoader> loader;
+            THROW_IF_FAILED(file->GetLoader(loader.addressof()));
+
+            if (const auto localLoader = loader.try_query<IDWriteLocalFontFileLoader>())
+            {
+                void const* fontFileReferenceKey;
+                UINT32 fontFileReferenceKeySize;
+                THROW_IF_FAILED(file->GetReferenceKey(&fontFileReferenceKey, &fontFileReferenceKeySize));
+                THROW_IF_FAILED(localLoader->GetFilePathFromKey(fontFileReferenceKey, fontFileReferenceKeySize, &filePath[0], MAX_PATH));
+            }
+        }
+    }
+#endif
 
     // It took me a while to figure out how to rasterize glyphs manually with DirectWrite without depending on Direct2D.
     // The benefits are a reduction in memory usage, an increase in performance under certain circumstances and most
@@ -1411,7 +1491,7 @@ bool BackendD3D::_drawGlyph(const RenderingPayload& p, const AtlasFontFaceEntryI
     const auto triggerRight = _ligatureOverhangTriggerRight * horizontalScale;
     const auto overlapSplit = rect.w >= p.s->font->cellSize.x && (bl <= triggerLeft || br >= triggerRight);
 
-    glyphEntry.data.shadingType = static_cast<u16>(isColorGlyph ? ShadingType::TextPassthrough : _textShadingType);
+    glyphEntry.data.shadingType = isColorGlyph ? ShadingType::TextPassthrough : _textShadingType;
     glyphEntry.data.overlapSplit = overlapSplit;
     glyphEntry.data.offset.x = bl;
     glyphEntry.data.offset.y = bt;
@@ -1455,7 +1535,7 @@ bool BackendD3D::_drawSoftFontGlyph(const RenderingPayload& p, const AtlasFontFa
     if (!_softFontBitmap)
     {
         // Allocating such a tiny texture is very wasteful (min. texture size on GPUs
-        // right now is 64kB), but this is a seldomly used feature so it's fine...
+        // right now is 64kB), but this is a seldom used feature so it's fine...
         const D2D1_SIZE_U size{
             static_cast<UINT32>(p.s->font->softFontCellSize.width),
             static_cast<UINT32>(p.s->font->softFontCellSize.height),
@@ -1468,30 +1548,6 @@ bool BackendD3D::_drawSoftFontGlyph(const RenderingPayload& p, const AtlasFontFa
         THROW_IF_FAILED(_d2dRenderTarget->CreateBitmap(size, nullptr, 0, &bitmapProperties, _softFontBitmap.addressof()));
     }
 
-    {
-        const auto width = static_cast<size_t>(p.s->font->softFontCellSize.width);
-        const auto height = static_cast<size_t>(p.s->font->softFontCellSize.height);
-
-        auto bitmapData = Buffer<u32>{ width * height };
-        const auto glyphIndex = glyphEntry.glyphIndex - 0xEF20u;
-        auto src = p.s->font->softFontPattern.begin() + height * glyphIndex;
-        auto dst = bitmapData.begin();
-
-        for (size_t y = 0; y < height; y++)
-        {
-            auto srcBits = *src++;
-            for (size_t x = 0; x < width; x++)
-            {
-                const auto srcBitIsSet = (srcBits & 0x8000) != 0;
-                *dst++ = srcBitIsSet ? 0xffffffff : 0x00000000;
-                srcBits <<= 1;
-            }
-        }
-
-        const auto pitch = static_cast<UINT32>(width * sizeof(u32));
-        THROW_IF_FAILED(_softFontBitmap->CopyFromMemory(nullptr, bitmapData.data(), pitch));
-    }
-
     const auto interpolation = p.s->font->antialiasingMode == AntialiasingMode::Aliased ? D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR : D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC;
     const D2D1_RECT_F dest{
         static_cast<f32>(rect.x),
@@ -1501,9 +1557,10 @@ bool BackendD3D::_drawSoftFontGlyph(const RenderingPayload& p, const AtlasFontFa
     };
 
     _d2dBeginDrawing();
+    _drawSoftFontGlyphInBitmap(p, glyphEntry);
     _d2dRenderTarget->DrawBitmap(_softFontBitmap.get(), &dest, 1, interpolation, nullptr, nullptr);
 
-    glyphEntry.data.shadingType = static_cast<u16>(ShadingType::TextGrayscale);
+    glyphEntry.data.shadingType = ShadingType::TextGrayscale;
     glyphEntry.data.overlapSplit = 0;
     glyphEntry.data.offset.x = 0;
     glyphEntry.data.offset.y = -baseline;
@@ -1518,6 +1575,51 @@ bool BackendD3D::_drawSoftFontGlyph(const RenderingPayload& p, const AtlasFontFa
     }
 
     return true;
+}
+
+void BackendD3D::_drawSoftFontGlyphInBitmap(const RenderingPayload& p, const AtlasGlyphEntry& glyphEntry) const
+{
+    if (!isSoftFontChar(glyphEntry.glyphIndex))
+    {
+        // AtlasEngine::_mapReplacementCharacter should have filtered inputs with isSoftFontChar already.
+        assert(false);
+        return;
+    }
+
+    const auto width = static_cast<size_t>(p.s->font->softFontCellSize.width);
+    const auto height = static_cast<size_t>(p.s->font->softFontCellSize.height);
+    const auto& softFontPattern = p.s->font->softFontPattern;
+
+    // The isSoftFontChar() range is [0xEF20,0xEF80).
+    const auto offset = glyphEntry.glyphIndex - 0xEF20u;
+    const auto offsetBeg = offset * height;
+    const auto offsetEnd = offsetBeg + height;
+
+    if (offsetEnd > softFontPattern.size())
+    {
+        // Out of range values should not occur, but they do and it's unknown why: GH#15553
+        assert(false);
+        return;
+    }
+
+    Buffer<u32> bitmapData{ width * height };
+    auto dst = bitmapData.begin();
+    auto it = softFontPattern.begin() + offsetBeg;
+    const auto end = softFontPattern.begin() + offsetEnd;
+
+    while (it != end)
+    {
+        auto srcBits = *it++;
+        for (size_t x = 0; x < width; x++)
+        {
+            const auto srcBitIsSet = (srcBits & 0x8000) != 0;
+            *dst++ = srcBitIsSet ? 0xffffffff : 0x00000000;
+            srcBits <<= 1;
+        }
+    }
+
+    const auto pitch = static_cast<UINT32>(width * sizeof(u32));
+    THROW_IF_FAILED(_softFontBitmap->CopyFromMemory(nullptr, bitmapData.data(), pitch));
 }
 
 void BackendD3D::_drawGlyphPrepareRetry(const RenderingPayload& p)
@@ -1562,11 +1664,11 @@ void BackendD3D::_splitDoubleHeightGlyph(const RenderingPayload& p, const AtlasF
     // double-height row. This effectively turns the other (unneeded) side into whitespace.
     if (!top.data.size.y)
     {
-        top.data.shadingType = static_cast<u16>(ShadingType::Default);
+        top.data.shadingType = ShadingType::Default;
     }
     if (!bottom.data.size.y)
     {
-        bottom.data.shadingType = static_cast<u16>(ShadingType::Default);
+        bottom.data.shadingType = ShadingType::Default;
     }
 }
 
@@ -1578,8 +1680,6 @@ void BackendD3D::_drawGridlines(const RenderingPayload& p, u16 y)
     const auto verticalShift = static_cast<u8>(row->lineRendition >= LineRendition::DoubleHeightTop);
 
     const auto cellSize = p.s->font->cellSize;
-    const auto dottedLineType = horizontalShift ? ShadingType::DottedLineWide : ShadingType::DottedLine;
-
     const auto rowTop = static_cast<i16>(cellSize.y * y);
     const auto rowBottom = static_cast<i16>(rowTop + cellSize.y);
 
@@ -1606,11 +1706,11 @@ void BackendD3D::_drawGridlines(const RenderingPayload& p, u16 y)
                 .shadingType = ShadingType::SolidLine,
                 .position = { static_cast<i16>(posX), rowTop },
                 .size = { width, p.s->font->cellSize.y },
-                .color = r.color,
+                .color = r.gridlineColor,
             };
         }
     };
-    const auto appendHorizontalLine = [&](const GridLineRange& r, FontDecorationPosition pos, ShadingType shadingType) {
+    const auto appendHorizontalLine = [&](const GridLineRange& r, FontDecorationPosition pos, ShadingType shadingType, const u32 color) {
         const auto offset = pos.position << verticalShift;
         const auto height = static_cast<u16>(pos.height << verticalShift);
 
@@ -1626,9 +1726,10 @@ void BackendD3D::_drawGridlines(const RenderingPayload& p, u16 y)
         {
             _appendQuad() = {
                 .shadingType = shadingType,
+                .renditionScale = { static_cast<u8>(1 << horizontalShift), static_cast<u8>(1 << verticalShift) },
                 .position = { left, static_cast<i16>(rt) },
                 .size = { width, static_cast<u16>(rb - rt) },
-                .color = r.color,
+                .color = color,
             };
         }
     };
@@ -1648,31 +1749,39 @@ void BackendD3D::_drawGridlines(const RenderingPayload& p, u16 y)
         }
         if (r.lines.test(GridLines::Top))
         {
-            appendHorizontalLine(r, p.s->font->gridTop, ShadingType::SolidLine);
+            appendHorizontalLine(r, p.s->font->gridTop, ShadingType::SolidLine, r.gridlineColor);
         }
         if (r.lines.test(GridLines::Bottom))
         {
-            appendHorizontalLine(r, p.s->font->gridBottom, ShadingType::SolidLine);
+            appendHorizontalLine(r, p.s->font->gridBottom, ShadingType::SolidLine, r.gridlineColor);
+        }
+        if (r.lines.test(GridLines::Strikethrough))
+        {
+            appendHorizontalLine(r, p.s->font->strikethrough, ShadingType::SolidLine, r.gridlineColor);
         }
 
         if (r.lines.test(GridLines::Underline))
         {
-            appendHorizontalLine(r, p.s->font->underline, ShadingType::SolidLine);
+            appendHorizontalLine(r, p.s->font->underline, ShadingType::SolidLine, r.underlineColor);
         }
-        if (r.lines.test(GridLines::HyperlinkUnderline))
+        else if (r.lines.any(GridLines::DottedUnderline, GridLines::HyperlinkUnderline))
         {
-            appendHorizontalLine(r, p.s->font->underline, dottedLineType);
+            appendHorizontalLine(r, p.s->font->underline, ShadingType::DottedLine, r.underlineColor);
         }
-        if (r.lines.test(GridLines::DoubleUnderline))
+        else if (r.lines.test(GridLines::DashedUnderline))
+        {
+            appendHorizontalLine(r, p.s->font->underline, ShadingType::DashedLine, r.underlineColor);
+        }
+        else if (r.lines.test(GridLines::CurlyUnderline))
+        {
+            appendHorizontalLine(r, _curlyUnderline, ShadingType::CurlyLine, r.underlineColor);
+        }
+        else if (r.lines.test(GridLines::DoubleUnderline))
         {
             for (const auto pos : p.s->font->doubleUnderline)
             {
-                appendHorizontalLine(r, pos, ShadingType::SolidLine);
+                appendHorizontalLine(r, pos, ShadingType::SolidLine, r.underlineColor);
             }
-        }
-        if (r.lines.test(GridLines::Strikethrough))
-        {
-            appendHorizontalLine(r, p.s->font->strikethrough, ShadingType::SolidLine);
         }
     }
 }
@@ -1821,7 +1930,7 @@ void BackendD3D::_drawCursorForeground()
         }
     }
     // We can also skip any instances (= any rows) at the beginning that are clearly not overlapping with
-    // the cursor. This reduces the the CPU cost of this function by roughly half (a few microseconds).
+    // the cursor. This reduces the CPU cost of this function by roughly half (a few microseconds).
     for (; instancesOffset < instancesCount; ++instancesOffset)
     {
         const auto& it = _instances[instancesOffset];
@@ -1973,6 +2082,8 @@ size_t BackendD3D::_drawCursorForegroundSlowPath(const CursorRect& c, size_t off
         auto& target = _instances[offset + i];
 
         target.shadingType = it.shadingType;
+        target.renditionScale.x = it.renditionScale.x;
+        target.renditionScale.y = it.renditionScale.y;
         target.position.x = static_cast<i16>(cutout.left);
         target.position.y = static_cast<i16>(cutout.top);
         target.size.x = static_cast<u16>(cutout.right - cutout.left);
@@ -1990,6 +2101,8 @@ size_t BackendD3D::_drawCursorForegroundSlowPath(const CursorRect& c, size_t off
     auto& target = cutoutCount ? _appendQuad() : _instances[offset];
 
     target.shadingType = it.shadingType;
+    target.renditionScale.x = it.renditionScale.x;
+    target.renditionScale.y = it.renditionScale.y;
     target.position.x = static_cast<i16>(intersectionL);
     target.position.y = static_cast<i16>(intersectionT);
     target.size.x = static_cast<u16>(intersectionR - intersectionL);
@@ -2091,8 +2204,8 @@ void BackendD3D::_executeCustomShader(RenderingPayload& p)
             .time = std::chrono::duration<f32>(std::chrono::steady_clock::now() - _customShaderStartTime).count(),
             .scale = static_cast<f32>(p.s->font->dpi) / static_cast<f32>(USER_DEFAULT_SCREEN_DPI),
             .resolution = {
-                static_cast<f32>(_cellCount.x * p.s->font->cellSize.x),
-                static_cast<f32>(_cellCount.y * p.s->font->cellSize.y),
+                static_cast<f32>(_viewportCellCount.x * p.s->font->cellSize.x),
+                static_cast<f32>(_viewportCellCount.y * p.s->font->cellSize.y),
             },
             .background = colorFromU32Premultiply<f32x4>(p.s->misc->backgroundColor),
         };

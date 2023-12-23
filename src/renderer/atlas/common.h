@@ -125,6 +125,7 @@ namespace Microsoft::Console::Render::Atlas
     };
 
     using u8 = uint8_t;
+    using u8x2 = vec2<u8>;
 
     using u16 = uint16_t;
     using u16x2 = vec2<u16>;
@@ -313,7 +314,7 @@ namespace Microsoft::Console::Render::Atlas
     struct TargetSettings
     {
         HWND hwnd = nullptr;
-        bool enableTransparentBackground = false;
+        bool useAlpha = false;
         bool useSoftwareRendering = false;
     };
 
@@ -387,8 +388,12 @@ namespace Microsoft::Console::Render::Atlas
         til::generational<FontSettings> font;
         til::generational<CursorSettings> cursor;
         til::generational<MiscellaneousSettings> misc;
-        u16x2 targetSize{};
-        u16x2 cellCount{};
+        // Size of the viewport / swap chain in pixel.
+        u16x2 targetSize{ 1, 1 };
+        // Size of the portion of the text buffer that we're drawing on the screen.
+        u16x2 viewportCellCount{ 1, 1 };
+        // The position of the viewport inside the text buffer (in cells).
+        u16x2 viewportOffset{ 0, 0 };
     };
 
     using GenerationalSettings = til::generational<Settings>;
@@ -422,7 +427,8 @@ namespace Microsoft::Console::Render::Atlas
     struct GridLineRange
     {
         GridLineSet lines;
-        u32 color = 0;
+        u32 gridlineColor = 0;
+        u32 underlineColor = 0;
         u16 from = 0;
         u16 to = 0;
     };
@@ -466,7 +472,6 @@ namespace Microsoft::Console::Render::Atlas
         wil::com_ptr<IDWriteFontFallback> systemFontFallback;
         wil::com_ptr<IDWriteFontFallback1> systemFontFallback1; // optional, might be nullptr
         wil::com_ptr<IDWriteTextAnalyzer1> textAnalyzer;
-        wil::com_ptr<IDWriteRenderingParams1> renderingParams;
         std::function<void(HRESULT)> warningCallback;
         std::function<void(HANDLE)> swapChainChangedCallback;
 
@@ -545,7 +550,7 @@ namespace Microsoft::Console::Render::Atlas
         void MarkAllAsDirty() noexcept
         {
             dirtyRectInPx = { 0, 0, s->targetSize.x, s->targetSize.y };
-            invalidatedRows = { 0, s->cellCount.y };
+            invalidatedRows = { 0, s->viewportCellCount.y };
             scrollOffset = 0;
         }
     };
